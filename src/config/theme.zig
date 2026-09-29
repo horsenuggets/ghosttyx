@@ -26,17 +26,17 @@ pub const Location = enum {
     ) error{OutOfMemory}!?[]const u8 {
         return switch (self) {
             .user => user: {
-                // Ghostty2 fork: themes live under ~/.config/ghostty2/themes
+                // GhosttyX fork: themes live under ~/.config/ghosttyx/themes
                 // so the fork can carry its own theme overrides without
                 // touching an upstream Ghostty's themes directory. The Debug
-                // bundle is routed to ~/.config/ghostty2-debug/themes so it
+                // bundle is routed to ~/.config/ghosttyx-debug/themes so it
                 // doesn't share theme overrides with production. The Darwin
                 // guard is comptime so non-Darwin builds never reference
                 // os/macos.zig (which imports the Darwin-only `objc` module).
                 const config_dir_name = if (comptime builtin.target.os.tag.isDarwin())
                     internal_os.macos.configDirName()
                 else
-                    "ghostty2";
+                    "ghosttyx";
                 const subdir = std.fs.path.join(arena_alloc, &.{
                     config_dir_name, "themes",
                 }) catch return error.OutOfMemory;

@@ -6,11 +6,11 @@ const objc = @import("objc");
 const Allocator = std.mem.Allocator;
 
 /// Returns true if the running app's bundle identifier ends with ".debug",
-/// which Ghostty2 uses as the marker for the side-by-side Debug flavor
+/// which GhosttyX uses as the marker for the side-by-side Debug flavor
 /// (`com.mitchellh.ghostty.debug`). Callers use this to route per-app
 /// state — config directory, theme overrides, etc. — to a distinct
-/// `~/.config/ghostty2-debug/` tree so the Debug app doesn't share state
-/// with the production Ghostty2 install.
+/// `~/.config/ghosttyx-debug/` tree so the Debug app doesn't share state
+/// with the production GhosttyX install.
 pub fn isDebugBundle() bool {
     if (comptime !builtin.target.os.tag.isDarwin()) return false;
     const NSBundle = objc.getClass("NSBundle") orelse return false;
@@ -24,10 +24,10 @@ pub fn isDebugBundle() bool {
 }
 
 /// Returns the XDG config sub-directory name for this build flavor:
-/// `ghostty2-debug` for the Debug bundle, `ghostty2` otherwise. The returned
+/// `ghosttyx-debug` for the Debug bundle, `ghosttyx` otherwise. The returned
 /// slice has static lifetime.
 pub fn configDirName() []const u8 {
-    return if (isDebugBundle()) "ghostty2-debug" else "ghostty2";
+    return if (isDebugBundle()) "ghosttyx-debug" else "ghosttyx";
 }
 
 /// Verifies that the running macOS system version is at least the given version.
@@ -221,7 +221,7 @@ test "cacheDir paths" {
 test "isDebugBundle and configDirName outside an app bundle" {
     if (!builtin.target.os.tag.isDarwin()) {
         try @import("std").testing.expectEqual(false, isDebugBundle());
-        try @import("std").testing.expectEqualStrings("ghostty2", configDirName());
+        try @import("std").testing.expectEqualStrings("ghosttyx", configDirName());
         try @import("std").testing.expectEqualStrings(build_config.bundle_id, bundleNamespace());
         return;
     }
@@ -232,6 +232,6 @@ test "isDebugBundle and configDirName outside an app bundle" {
     // shape and never crash when the bundle/identifier APIs return nil.
     const testing = @import("std").testing;
     try testing.expectEqual(false, isDebugBundle());
-    try testing.expectEqualStrings("ghostty2", configDirName());
+    try testing.expectEqualStrings("ghosttyx", configDirName());
     try testing.expectEqualStrings(build_config.bundle_id, bundleNamespace());
 }
