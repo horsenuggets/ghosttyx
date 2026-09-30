@@ -8,6 +8,10 @@ A file for [guiding coding agents](https://agents.md/).
   - If you're on macOS and don't need to build the macOS app, use
     `-Demit-macos-app=false` to skip building the app bundle and speed up
     compilation.
+  - **Build + install the macOS app:** `./scripts/build-macos.sh`. This handles
+    the pinned Zig version and the older-SDK swap required to link on current
+    macOS (see that script's header and the Fork Notes below), then installs
+    `GhosttyX.app` to `/Applications`.
 - **Test (Zig):** `zig build test`
   - Prefer to run targeted tests with `-Dtest-filter` because the full
     test suite is slow to run.
