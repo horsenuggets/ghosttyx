@@ -909,7 +909,7 @@ const ColorState = struct {
         const sbix: bool = sbix: {
             const tag = macos.text.FontTableTag.init("sbix");
             const data = f.copyTable(tag) orelse break :sbix false;
-            data.release();
+            defer data.release();
             break :sbix data.getLength() > 0;
         };
 
