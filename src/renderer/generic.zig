@@ -13,7 +13,6 @@ const math = @import("../math.zig");
 const Surface = @import("../Surface.zig");
 const link = @import("link.zig");
 const cellpkg = @import("cell.zig");
-const uucode = @import("uucode");
 const noMinContrast = cellpkg.noMinContrast;
 const constraintWidth = cellpkg.constraintWidth;
 const isCovering = cellpkg.isCovering;
@@ -539,7 +538,6 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
 
             font_thicken: bool,
             font_thicken_strength: u8,
-            font_symbol_extend_to_whitespace: bool,
             font_features: std.ArrayListUnmanaged([:0]const u8),
             font_styles: font.CodepointResolver.StyleStatus,
             font_shaping_break: configpkg.FontShapingBreak,
@@ -611,7 +609,6 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
                     .background_opacity_cells = config.@"background-opacity-cells",
                     .font_thicken = config.@"font-thicken",
                     .font_thicken_strength = config.@"font-thicken-strength",
-                    .font_symbol_extend_to_whitespace = config.@"font-symbol-extend-to-whitespace",
                     .font_features = font_features.list,
                     .font_styles = font_styles,
                     .font_shaping_break = config.@"font-shaping-break",
@@ -3189,27 +3186,14 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
                     // If there's no Nerd Font constraint for this codepoint
                     // then, if it's a symbol, we constrain it to fit inside
                     // its cell(s), we don't modify the alignment at all.
-                    // Emoji-presentation codepoints bypass the .fit
-                    // constraint — they're rendered through color paths
-                    // (sbix/COLR/SVG) that produce bitmaps already sized
-                    // to the em box. Shrinking them would clip the bitmap
-                    // into the smaller outline bbox and leave the glyph
-                    // invisible (this is exactly what happened to our ✅
-                    // in Gridfit Mono before this branch). Apple Color
-                    // Emoji codepoints fall in the same bucket and also
-                    // benefit from skipping .fit.
-                    .constraint = if (uucode.get(.is_emoji_presentation, @intCast(cp)))
-                        .none
-                    else
-                        getConstraint(cp) orelse
-                            if (cellpkg.isSymbol(cp)) .{
-                                .size = .fit,
-                            } else .none,
+                    .constraint = getConstraint(cp) orelse
+                        if (cellpkg.isSymbol(cp)) .{
+                            .size = .fit,
+                        } else .none,
                     .constraint_width = constraintWidth(
                         cell_raws,
                         x,
                         cols,
-                        self.config.font_symbol_extend_to_whitespace,
                     ),
                 },
             );
