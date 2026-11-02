@@ -1131,6 +1131,11 @@ palette: Palette = .{},
 @"search-selected-foreground": TerminalColor = .{ .color = .{ .r = 0, .g = 0, .b = 0 } },
 @"search-selected-background": TerminalColor = .{ .color = .{ .r = 0xF2, .g = 0xA5, .b = 0x7E } },
 
+/// Whether to enable terminal echo when creating a new PTY. Disable this only if
+/// your shell restores echo during startup. This can prevent keystrokes typed
+/// during shell startup from appearing before the first prompt.
+@"startup-echo": bool = true,
+
 /// The command to run, usually a shell. If this is not an absolute path, it'll
 /// be looked up in the `PATH`. If this is not set, a default will be looked up
 /// from your system. The rules for the default lookup are:

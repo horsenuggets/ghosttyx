@@ -66,8 +66,9 @@ const NullPty = struct {
 
     pub const OpenError = error{};
 
-    pub fn open(size: winsize) OpenError!Pty {
+    pub fn open(size: winsize, echo: bool) OpenError!Pty {
         _ = size;
+        _ = echo;
         return .{ .master = 0, .slave = 0 };
     }
 
@@ -130,8 +131,8 @@ const PosixPty = struct {
 
     pub const OpenError = error{OpenptyFailed};
 
-    /// Open a new PTY with the given initial size.
-    pub fn open(size: winsize) OpenError!Pty {
+    /// Open a new PTY with the given initial size and echo state.
+    pub fn open(size: winsize, echo: bool) OpenError!Pty {
         // Need to copy so that it becomes non-const.
         var sizeCopy = size;
 
@@ -174,6 +175,7 @@ const PosixPty = struct {
         if (c.tcgetattr(master_fd, &attrs) != 0)
             return error.OpenptyFailed;
         attrs.c_iflag |= c.IUTF8;
+        if (!echo) attrs.c_lflag &= ~@as(@TypeOf(attrs.c_lflag), c.ECHO);
         if (c.tcsetattr(master_fd, c.TCSANOW, &attrs) != 0)
             return error.OpenptyFailed;
 
@@ -339,8 +341,9 @@ const WindowsPty = struct {
 
     pub const OpenError = error{Unexpected};
 
-    /// Open a new PTY with the given initial size.
-    pub fn open(size: winsize) OpenError!Pty {
+    /// Open a new PTY with the given initial size and echo state.
+    pub fn open(size: winsize, echo: bool) OpenError!Pty {
+        _ = echo;
         var pty: Pty = undefined;
 
         var pipe_path_buf: [128]u8 = undefined;
@@ -486,8 +489,12 @@ test {
         .ws_ypixel = 1,
     };
 
-    var pty = try Pty.open(ws);
+    var pty = try Pty.open(ws, true);
     defer pty.deinit();
+
+    if (builtin.os.tag != .windows and builtin.os.tag != .ios) {
+        try testing.expect((try pty.getMode()).echo);
+    }
 
     // Initialize size should match what we gave it
     try testing.expectEqual(ws, try pty.getSize());
@@ -503,4 +510,12 @@ test {
         .macos => try testing.expect(std.mem.startsWith(u8, pty.getProcessInfo(.tty_name).?, "/dev/")),
         else => try testing.expect(pty.getProcessInfo(.tty_name) == null),
     }
+}
+
+test "initial echo can be disabled" {
+    if (builtin.os.tag == .windows or builtin.os.tag == .ios) return error.SkipTest;
+
+    var pty = try Pty.open(.{}, false);
+    defer pty.deinit();
+    try std.testing.expect(!(try pty.getMode()).echo);
 }

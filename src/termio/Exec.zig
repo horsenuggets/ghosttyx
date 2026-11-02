@@ -567,6 +567,7 @@ pub const Config = struct {
     shell_integration: configpkg.Config.ShellIntegration = .detect,
     shell_integration_features: configpkg.Config.ShellIntegrationFeatures = .{},
     cursor_blink: ?bool = null,
+    startup_echo: bool = true,
     working_directory: ?[]const u8 = null,
     resources_dir: ?[]const u8,
     term: []const u8,
@@ -588,6 +589,7 @@ const Subprocess = struct {
     args: []const [:0]const u8,
     grid_size: renderer.GridSize,
     screen_size: renderer.ScreenSize,
+    startup_echo: bool,
     pty: ?Pty = null,
     process: ?Process = null,
 
@@ -864,6 +866,7 @@ const Subprocess = struct {
             .env = env,
             .cwd = cwd,
             .args = args,
+            .startup_echo = cfg.startup_echo,
 
             .rt_pre_exec_info = cfg.rt_pre_exec_info,
             .rt_post_fork_info = cfg.rt_post_fork_info,
@@ -903,7 +906,7 @@ const Subprocess = struct {
             .ws_col = @intCast(self.grid_size.columns),
             .ws_xpixel = @intCast(self.screen_size.width),
             .ws_ypixel = @intCast(self.screen_size.height),
-        });
+        }, self.startup_echo);
         self.pty = pty;
         errdefer if (!in_child) {
             if (comptime builtin.os.tag != .windows) {
