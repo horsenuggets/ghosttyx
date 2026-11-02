@@ -84,7 +84,12 @@ echo "Using Zig $ZIG_VERSION at \"$ZIG_BIN\"."
 
 # --- Temporarily swap in a linkable macOS SDK --------------------------------
 
-SDK_ROOT="$(xcode-select -p)/SDKs"
+DEVELOPER_DIR="$(xcode-select -p)"
+if [ -d "$DEVELOPER_DIR/Platforms/MacOSX.platform/Developer/SDKs" ]; then
+    SDK_ROOT="$DEVELOPER_DIR/Platforms/MacOSX.platform/Developer/SDKs"
+else
+    SDK_ROOT="$DEVELOPER_DIR/SDKs"
+fi
 
 # xcrun often reports the MacOSX.sdk symlink rather than the real SDK
 # directory, so follow the symlink chain to get the real directory name, and
@@ -122,7 +127,14 @@ ORIG_MAJOR="$(readlink "$SDK_ROOT/MacOSX${NEWEST_MAJOR}.sdk" 2>/dev/null || true
 restore_sdk() {
     [[ "$SWAP_DONE" == "1" ]] || return 0
     echo "Restoring original SDK layout..."
-    sudo mv "$SDK_ROOT/$NEWEST_SDK.ghosttyx-bak" "$SDK_ROOT/$NEWEST_SDK" 2>/dev/null || true
+    if [ -e "$SDK_ROOT/$NEWEST_SDK.ghosttyx-bak" ]; then
+        # If the original SDK was a real directory, the fallback is only a symlink in its
+        # place. Remove that symlink so the backup moves back instead of into the fallback.
+        if [ -L "$SDK_ROOT/$NEWEST_SDK" ]; then
+            sudo rm -f "$SDK_ROOT/$NEWEST_SDK"
+        fi
+        sudo mv "$SDK_ROOT/$NEWEST_SDK.ghosttyx-bak" "$SDK_ROOT/$NEWEST_SDK"
+    fi
     [[ -n "$ORIG_DEFAULT" ]] && sudo ln -sfn "$ORIG_DEFAULT" "$SDK_ROOT/MacOSX.sdk"
     [[ -n "$ORIG_MAJOR" ]] && sudo ln -sfn "$ORIG_MAJOR" "$SDK_ROOT/MacOSX${NEWEST_MAJOR}.sdk"
     rm -rf "$(getconf DARWIN_USER_CACHE_DIR)com.apple.DeveloperTools" 2>/dev/null || true
