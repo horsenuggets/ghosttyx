@@ -84,7 +84,12 @@ echo "Using Zig $ZIG_VERSION at \"$ZIG_BIN\"."
 
 # --- Temporarily swap in a linkable macOS SDK --------------------------------
 
-SDK_ROOT="$(xcode-select -p)/SDKs"
+DEVELOPER_DIR="$(xcode-select -p)"
+if [ -d "$DEVELOPER_DIR/Platforms/MacOSX.platform/Developer/SDKs" ]; then
+    SDK_ROOT="$DEVELOPER_DIR/Platforms/MacOSX.platform/Developer/SDKs"
+else
+    SDK_ROOT="$DEVELOPER_DIR/SDKs"
+fi
 
 # xcrun often reports the MacOSX.sdk symlink rather than the real SDK
 # directory, so follow the symlink chain to get the real directory name, and
