@@ -58,7 +58,6 @@ class TitlebarTabsVenturaTerminalWindow: TerminalWindow {
 
         updateNewTabButtonOpacity()
         resetZoomToolbarButton.contentTintColor = .controlAccentColor
-        tab.attributedTitle = attributedTitle
     }
 
     override func resignKey() {
@@ -66,7 +65,6 @@ class TitlebarTabsVenturaTerminalWindow: TerminalWindow {
 
         updateNewTabButtonOpacity()
         resetZoomToolbarButton.contentTintColor = .tertiaryLabelColor
-        tab.attributedTitle = attributedTitle
     }
 
 	override func layoutIfNeeded() {

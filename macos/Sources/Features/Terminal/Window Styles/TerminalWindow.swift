@@ -199,11 +199,13 @@ class TerminalWindow: NSWindow {
 
     override func becomeKey() {
         super.becomeKey()
+        tab.attributedTitle = attributedTitle
         resetZoomTabButton.contentTintColor = .controlAccentColor
     }
 
     override func resignKey() {
         super.resignKey()
+        tab.attributedTitle = attributedTitle
         resetZoomTabButton.contentTintColor = .secondaryLabelColor
         tabTitleEditor.finishEditing(commit: true)
     }
@@ -393,8 +395,7 @@ class TerminalWindow: NSWindow {
 
     override var title: String {
         didSet {
-            // Whenever we change the window title we must also update our
-            // tab title if we're using custom fonts.
+            // Refresh the tab's font runs whenever the window title changes.
             tab.attributedTitle = attributedTitle
             /// We also needs to update this here, just in case
             /// the value is not what we want
@@ -430,13 +431,11 @@ class TerminalWindow: NSWindow {
 
     // Return a styled representation of our title property.
     var attributedTitle: NSAttributedString? {
-        guard let titlebarFont = titlebarFont else { return nil }
-
-        let attributes: [NSAttributedString.Key: Any] = [
-            .font: titlebarFont,
-            .foregroundColor: isKeyWindow ? NSColor.labelColor : NSColor.secondaryLabelColor,
-        ]
-        return NSAttributedString(string: title, attributes: attributes)
+        TabTitleTypography.attributedTitle(
+            title,
+            font: titlebarFont,
+            color: isKeyWindow ? .labelColor : .secondaryLabelColor
+        )
     }
 
     var titlebarContainer: NSView? {
