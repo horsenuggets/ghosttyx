@@ -120,19 +120,24 @@ if [[ -n "$FALLBACK_SDK" && "$FALLBACK_SDK" != /* ]]; then
     FALLBACK_SDK="$SDK_ROOT/$FALLBACK_SDK"
 fi
 if [[ -z "$FALLBACK_SDK" && -n "$NEWEST_MAJOR" ]]; then
-    best_major=0
+    # Collect every eligible SDK so the newest one wins across all roots,
+    # including newer patch releases within the same major version.
+    sdk_candidates=()
     for root in "$SDK_ROOT" /Library/Developer/CommandLineTools/SDKs; do
         [[ -d "$root" ]] || continue
         while IFS= read -r sdk; do
             [[ -L "$root/$sdk" ]] && continue
-            major="$(sed -n 's/^MacOSX\([0-9]*\).*/\1/p' <<<"$sdk")"
-            [[ -z "$major" ]] && continue
-            if (( major < NEWEST_MAJOR && major > best_major )); then
-                best_major="$major"
-                FALLBACK_SDK="$root/$sdk"
+            version="$(sed -n 's/^MacOSX\([0-9][0-9.]*\)\.sdk$/\1/p' <<<"$sdk")"
+            [[ -z "$version" ]] && continue
+            if (( ${version%%.*} < NEWEST_MAJOR )); then
+                sdk_candidates+=("$version $root/$sdk")
             fi
-        done < <(cd "$root" && ls -d MacOSX*.sdk 2>/dev/null | sort -V)
+        done < <(cd "$root" && ls -d MacOSX*.sdk 2>/dev/null)
     done
+    if (( ${#sdk_candidates[@]} > 0 )); then
+        FALLBACK_SDK="$(printf '%s\n' "${sdk_candidates[@]}" \
+            | sort -V | tail -n1 | cut -d' ' -f2-)"
+    fi
 fi
 
 SWAP_DONE=0
