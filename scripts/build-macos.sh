@@ -17,9 +17,13 @@
 #      wall of "undefined symbol: _sigaction" style errors -- including for
 #      Zig's own build runner, which is why `--sysroot` / `SDKROOT` alone are
 #      not enough (they do not reach the build-runner compile). The script
-#      temporarily makes an older, linkable SDK the default (moves the newest
-#      SDK aside and repoints the `MacOSX*.sdk` symlinks), builds, then restores
-#      the original SDK layout on exit no matter how the build ends.
+#      temporarily makes an older, linkable SDK the default by repointing the
+#      `MacOSX*.sdk` symlinks, builds, then restores the original layout on exit
+#      no matter how the build ends. The newest SDK is left in place, because
+#      xcodebuild resolves `SDKROOT = macosx` to the highest installed SDK and
+#      needs the newer one for the Swift sources. The fallback is taken from the
+#      active Xcode or, when Xcode ships only one SDK, from the Command Line
+#      Tools.
 #
 # Usage:
 #     ./scripts/build-macos.sh                        # build + install to /Applications
@@ -107,17 +111,33 @@ NEWEST_SDK="$(basename "$sdk_path")"
 NEWEST_MAJOR="$(xcrun --show-sdk-version 2>/dev/null | cut -d. -f1)"
 
 # Pick a fallback SDK: an explicit override, otherwise the highest real SDK
-# directory whose major version is lower than the newest SDK's.
+# directory whose major version is lower than the newest SDK's. Current Xcodes
+# ship only one SDK, so also look in the Command Line Tools, which keep the
+# older SDKs. The fallback is kept as an absolute path since it may live
+# outside the active SDK root.
 FALLBACK_SDK="${GHOSTTYX_FALLBACK_SDK:-}"
+if [[ -n "$FALLBACK_SDK" && "$FALLBACK_SDK" != /* ]]; then
+    FALLBACK_SDK="$SDK_ROOT/$FALLBACK_SDK"
+fi
 if [[ -z "$FALLBACK_SDK" && -n "$NEWEST_MAJOR" ]]; then
-    while IFS= read -r sdk; do
-        [[ -L "$SDK_ROOT/$sdk" ]] && continue
-        major="$(sed -n 's/^MacOSX\([0-9]*\).*/\1/p' <<<"$sdk")"
-        [[ -z "$major" ]] && continue
-        if (( major < NEWEST_MAJOR )); then
-            FALLBACK_SDK="$sdk"
-        fi
-    done < <(cd "$SDK_ROOT" && ls -d MacOSX*.sdk 2>/dev/null | sort -V)
+    # Collect every eligible SDK so the newest one wins across all roots,
+    # including newer patch releases within the same major version.
+    sdk_candidates=()
+    for root in "$SDK_ROOT" /Library/Developer/CommandLineTools/SDKs; do
+        [[ -d "$root" ]] || continue
+        while IFS= read -r sdk; do
+            [[ -L "$root/$sdk" ]] && continue
+            version="$(sed -n 's/^MacOSX\([0-9][0-9.]*\)\.sdk$/\1/p' <<<"$sdk")"
+            [[ -z "$version" ]] && continue
+            if (( ${version%%.*} < NEWEST_MAJOR )); then
+                sdk_candidates+=("$version $root/$sdk")
+            fi
+        done < <(cd "$root" && ls -d MacOSX*.sdk 2>/dev/null)
+    done
+    if (( ${#sdk_candidates[@]} > 0 )); then
+        FALLBACK_SDK="$(printf '%s\n' "${sdk_candidates[@]}" \
+            | sort -V | tail -n1 | cut -d' ' -f2-)"
+    fi
 fi
 
 SWAP_DONE=0
@@ -127,27 +147,18 @@ ORIG_MAJOR="$(readlink "$SDK_ROOT/MacOSX${NEWEST_MAJOR}.sdk" 2>/dev/null || true
 restore_sdk() {
     [[ "$SWAP_DONE" == "1" ]] || return 0
     echo "Restoring original SDK layout..."
-    if [ -e "$SDK_ROOT/$NEWEST_SDK.ghosttyx-bak" ]; then
-        # If the original SDK was a real directory, the fallback is only a symlink in its
-        # place. Remove that symlink so the backup moves back instead of into the fallback.
-        if [ -L "$SDK_ROOT/$NEWEST_SDK" ]; then
-            sudo rm -f "$SDK_ROOT/$NEWEST_SDK"
-        fi
-        sudo mv "$SDK_ROOT/$NEWEST_SDK.ghosttyx-bak" "$SDK_ROOT/$NEWEST_SDK"
-    fi
     [[ -n "$ORIG_DEFAULT" ]] && sudo ln -sfn "$ORIG_DEFAULT" "$SDK_ROOT/MacOSX.sdk"
     [[ -n "$ORIG_MAJOR" ]] && sudo ln -sfn "$ORIG_MAJOR" "$SDK_ROOT/MacOSX${NEWEST_MAJOR}.sdk"
     rm -rf "$(getconf DARWIN_USER_CACHE_DIR)com.apple.DeveloperTools" 2>/dev/null || true
 }
 trap restore_sdk EXIT
 
-if [[ -n "$FALLBACK_SDK" && "$FALLBACK_SDK" != "$NEWEST_SDK" \
+if [[ -n "$FALLBACK_SDK" && "$FALLBACK_SDK" != "$SDK_ROOT/$NEWEST_SDK" \
     && -d "$SDK_ROOT/$NEWEST_SDK" && ! -L "$SDK_ROOT/$NEWEST_SDK" ]]; then
-    echo "Swapping default SDK for the build: $NEWEST_SDK -> $FALLBACK_SDK"
+    echo "Swapping default SDK for the build: $NEWEST_SDK -> $(basename "$FALLBACK_SDK")"
     SWAP_DONE=1
-    sudo mv "$SDK_ROOT/$NEWEST_SDK" "$SDK_ROOT/$NEWEST_SDK.ghosttyx-bak"
-    sudo ln -sfn "$FALLBACK_SDK" "$SDK_ROOT/MacOSX.sdk"
-    sudo ln -sfn "$FALLBACK_SDK" "$SDK_ROOT/MacOSX${NEWEST_MAJOR}.sdk"
+    [[ -n "$ORIG_DEFAULT" ]] && sudo ln -sfn "$FALLBACK_SDK" "$SDK_ROOT/MacOSX.sdk"
+    [[ -n "$ORIG_MAJOR" ]] && sudo ln -sfn "$FALLBACK_SDK" "$SDK_ROOT/MacOSX${NEWEST_MAJOR}.sdk"
     rm -rf "$(getconf DARWIN_USER_CACHE_DIR)com.apple.DeveloperTools" 2>/dev/null || true
 else
     echo "No older SDK swap needed (building against $NEWEST_SDK)."
