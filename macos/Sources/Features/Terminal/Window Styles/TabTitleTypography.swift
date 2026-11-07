@@ -13,6 +13,10 @@ enum TabTitleTypography {
 
     private static let symbolCharacters = bundledSymbolFont.map { CTFontCopyCharacterSet($0) as CharacterSet }
 
+    static func isSymbolFont(_ font: NSFont) -> Bool {
+        bundledSymbolFont.map { ($0 as NSFont).fontName == font.fontName } ?? false
+    }
+
     static func attributedTitle(_ title: String, font: NSFont?, color: NSColor) -> NSAttributedString? {
         let baseFont = font ?? .titleBarFont(ofSize: NSFont.systemFontSize)
         let result = NSMutableAttributedString(string: title, attributes: [
