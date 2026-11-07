@@ -173,8 +173,16 @@ final class TabTitleEditor: NSObject, NSTextFieldDelegate {
             editorCell.usesSingleLineMode = true
             editorCell.isScrollable = true
         }
+        let editorFont: NSFont?
         if let sourceLabel {
-            applyTextStyle(to: editor, from: sourceLabel, title: editedTitle)
+            editorFont = applyTextStyle(
+                to: editor,
+                from: sourceLabel,
+                title: editedTitle,
+                titlebarFont: (targetWindow as? TerminalWindow)?.titlebarFont
+            )
+        } else {
+            editorFont = editor.font
         }
 
         // Hide it until the tab button has finished layout so we can avoid flicker.
@@ -209,14 +217,13 @@ final class TabTitleEditor: NSObject, NSTextFieldDelegate {
             guard let responderWindow else { return }
             editor.isHidden = false
             responderWindow.makeFirstResponder(editor)
+            editor.currentEditor()?.selectAll(nil)
             if let fieldEditor = editor.currentEditor() as? NSTextView,
-               let editorFont = editor.font {
-                fieldEditor.font = editorFont
+               let editorFont {
                 var typingAttributes = fieldEditor.typingAttributes
                 typingAttributes[.font] = editorFont
                 fieldEditor.typingAttributes = typingAttributes
             }
-            editor.currentEditor()?.selectAll(nil)
         }
 
         return true
@@ -305,7 +312,12 @@ final class TabTitleEditor: NSObject, NSTextFieldDelegate {
     }
 
     /// Copies text styling from the source tab label onto the inline editor.
-    private func applyTextStyle(to editor: NSTextField, from label: NSTextField, title: String) {
+    private func applyTextStyle(
+        to editor: NSTextField,
+        from label: NSTextField,
+        title: String,
+        titlebarFont: NSFont?
+    ) -> NSFont? {
         var attributes: [NSAttributedString.Key: Any] = [:]
         if label.attributedStringValue.length > 0 {
             attributes = label.attributedStringValue.attributes(at: 0, effectiveRange: nil)
@@ -313,6 +325,9 @@ final class TabTitleEditor: NSObject, NSTextFieldDelegate {
 
         if attributes[.font] == nil, let font = label.font {
             attributes[.font] = font
+        }
+        if let font = attributes[.font] as? NSFont, TabTitleTypography.isSymbolFont(font) {
+            attributes[.font] = titlebarFont ?? NSFont.titleBarFont(ofSize: font.pointSize)
         }
 
         if attributes[.foregroundColor] == nil {
@@ -327,11 +342,15 @@ final class TabTitleEditor: NSObject, NSTextFieldDelegate {
             editor.textColor = textColor
         }
 
+        let baseFont = editor.font
         if !attributes.isEmpty {
-            editor.attributedStringValue = NSAttributedString(string: title, attributes: attributes)
+            let styled = NSMutableAttributedString(string: title, attributes: attributes)
+            TabTitleTypography.applySymbolFont(to: styled, pointSize: baseFont?.pointSize ?? NSFont.systemFontSize)
+            editor.attributedStringValue = styled
         } else {
             editor.stringValue = title
         }
+        return baseFont
     }
 
     // MARK: NSTextFieldDelegate

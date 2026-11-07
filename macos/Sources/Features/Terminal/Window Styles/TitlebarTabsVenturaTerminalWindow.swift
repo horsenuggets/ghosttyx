@@ -58,7 +58,6 @@ class TitlebarTabsVenturaTerminalWindow: TerminalWindow {
 
         updateNewTabButtonOpacity()
         resetZoomToolbarButton.contentTintColor = .controlAccentColor
-        tab.attributedTitle = attributedTitle
     }
 
     override func resignKey() {
@@ -66,7 +65,6 @@ class TitlebarTabsVenturaTerminalWindow: TerminalWindow {
 
         updateNewTabButtonOpacity()
         resetZoomToolbarButton.contentTintColor = .tertiaryLabelColor
-        tab.attributedTitle = attributedTitle
     }
 
 	override func layoutIfNeeded() {
@@ -595,6 +593,7 @@ private class TerminalToolbar: NSToolbar, NSToolbarDelegate {
 
         set {
             titleTextField.stringValue = newValue
+            updateTitleSymbols()
         }
     }
 
@@ -605,6 +604,15 @@ private class TerminalToolbar: NSToolbar, NSToolbarDelegate {
 
         set {
             titleTextField.font = newValue
+            updateTitleSymbols()
+        }
+    }
+
+    private func updateTitleSymbols() {
+        let styled = NSMutableAttributedString(attributedString: titleTextField.attributedStringValue)
+        let pointSize = titleTextField.font?.pointSize ?? NSFont.systemFontSize
+        if TabTitleTypography.applySymbolFont(to: styled, pointSize: pointSize) {
+            titleTextField.attributedStringValue = styled
         }
     }
 
