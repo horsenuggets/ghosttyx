@@ -33,8 +33,18 @@ struct TabTitleTypographyTests {
         #expect(bounds.allSatisfy { !$0.isEmpty && $0 == bounds.first })
     }
 
+    @Test(arguments: ["☑", "☑\u{FE0E}"])
+    func ballotBoxUsesGridfit(_ symbol: String) throws {
+        let title = try #require(TabTitleTypography.attributedTitle(symbol, font: nil, color: .labelColor))
+        let line = CTLineCreateWithAttributedString(title)
+        let runs = try #require(CTLineGetGlyphRuns(line) as? [CTRun])
+        let run = try #require(runs.first)
+        let font = try #require((CTRunGetAttributes(run) as NSDictionary)[kCTFontAttributeName] as? NSFont)
+        #expect(font.fontName == "GridfitSymbols-Regular")
+    }
+
     @Test func plainTitlesAndExplicitEmojiKeepSystemStyling() {
-        for title in ["Session", "◻\u{FE0F} Session", "◼\u{FE0F} Session"] {
+        for title in ["Session", "◻\u{FE0F} Session", "◼\u{FE0F} Session", "☑\u{FE0F} Session"] {
             #expect(TabTitleTypography.attributedTitle(title, font: nil, color: .labelColor) == nil)
         }
     }
