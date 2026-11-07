@@ -200,12 +200,14 @@ class TerminalWindow: NSWindow {
     override func becomeKey() {
         super.becomeKey()
         tab.attributedTitle = attributedTitle
+        updateNativeTitleSymbols()
         resetZoomTabButton.contentTintColor = .controlAccentColor
     }
 
     override func resignKey() {
         super.resignKey()
         tab.attributedTitle = attributedTitle
+        updateNativeTitleSymbols()
         resetZoomTabButton.contentTintColor = .secondaryLabelColor
         tabTitleEditor.finishEditing(commit: true)
     }
@@ -403,6 +405,7 @@ class TerminalWindow: NSWindow {
             /// Check ``titlebarFont`` down below
             /// to see why we need to check `hasMoreThanOneTabs` here
             titlebarTextField?.usesSingleLineMode = !hasMoreThanOneTabs
+            updateNativeTitleSymbols()
         }
     }
 
@@ -419,6 +422,22 @@ class TerminalWindow: NSWindow {
             /// This behaviour is the opposite of what happens in the title bar’s text field, which is quite odd...
             titlebarTextField?.usesSingleLineMode = !hasMoreThanOneTabs
             tab.attributedTitle = attributedTitle
+            updateNativeTitleSymbols()
+        }
+    }
+
+    override func update() {
+        super.update()
+        updateNativeTitleSymbols()
+    }
+
+    private func updateNativeTitleSymbols() {
+        guard titleVisibility == .visible, let field = titlebarTextField, field.stringValue == title else { return }
+        let original = field.attributedStringValue
+        let styled = NSMutableAttributedString(attributedString: original)
+        let pointSize = field.font?.pointSize ?? NSFont.systemFontSize
+        if TabTitleTypography.applySymbolFont(to: styled, pointSize: pointSize), !styled.isEqual(to: original) {
+            field.attributedStringValue = styled
         }
     }
 

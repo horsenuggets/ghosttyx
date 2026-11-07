@@ -48,4 +48,17 @@ struct TabTitleTypographyTests {
             #expect(TabTitleTypography.attributedTitle(title, font: nil, color: .labelColor) == nil)
         }
     }
+
+    @Test func stylingNativeTitlePreservesItsOtherAttributes() throws {
+        let font = NSFont.titleBarFont(ofSize: 13)
+        let title = NSMutableAttributedString(string: "☑ Session", attributes: [
+            .font: font,
+            .foregroundColor: NSColor.secondaryLabelColor,
+        ])
+        #expect(TabTitleTypography.applySymbolFont(to: title, pointSize: font.pointSize))
+        let symbolFont = try #require(title.attribute(.font, at: 0, effectiveRange: nil) as? NSFont)
+        #expect(symbolFont.fontName == "GridfitSymbols-Regular")
+        #expect(title.attribute(.font, at: 2, effectiveRange: nil) as? NSFont == font)
+        #expect(title.attribute(.foregroundColor, at: 0, effectiveRange: nil) as? NSColor == .secondaryLabelColor)
+    }
 }

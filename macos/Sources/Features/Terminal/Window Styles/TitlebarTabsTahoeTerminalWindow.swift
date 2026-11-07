@@ -298,13 +298,26 @@ extension TitlebarTabsTahoeTerminalWindow {
 
         @ViewBuilder
         var titleText: some View {
-            Text(title)
+            Text(styledTitle)
                 .font(viewModel.titleFont.flatMap(Font.init(_:)))
                 .foregroundStyle(viewModel.isMainWindow ? .primary : .secondary)
                 .lineLimit(1)
                 .truncationMode(.tail)
                 .frame(maxWidth: .greatestFiniteMagnitude, alignment: .center)
                 .opacity(viewModel.hasTabBar ? 0 : 1) // hide when in fullscreen mode, where title bar will appear in the leading area under window buttons
+        }
+
+        private var styledTitle: AttributedString {
+            var result = AttributedString(title)
+            let symbols = NSMutableAttributedString(string: title)
+            let pointSize = viewModel.titleFont?.pointSize ?? NSFont.systemFontSize
+            guard TabTitleTypography.applySymbolFont(to: symbols, pointSize: pointSize) else { return result }
+            symbols.enumerateAttribute(.font, in: NSRange(location: 0, length: symbols.length)) { value, range, _ in
+                if let font = value as? NSFont, let range = Range(range, in: result) {
+                    result[range].font = Font(font)
+                }
+            }
+            return result
         }
     }
 }
