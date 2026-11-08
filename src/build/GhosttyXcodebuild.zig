@@ -49,7 +49,8 @@ pub fn init(
     };
 
     const env = try std.process.getEnvMap(b.allocator);
-    const app_path = b.fmt("macos/build/{s}/GhosttyX.app", .{xc_config});
+    const app_path = b.fmt("macos/build/{s}/GhosttyX.build.app", .{xc_config});
+    const staging_path = b.fmt("{s}/GhosttyX.staging.app", .{b.install_path});
 
     // Our step to build the Ghostty macOS app.
     const build = build: {
@@ -168,15 +169,23 @@ pub fn init(
         break :open open;
     };
 
-    // Our step to copy the app bundle to the install path.
-    // We have to use `cp -R` because there are symlinks in the
-    // bundle.
+    // Our step to copy the app bundle to the install path. The staged bundle
+    // is renamed so that build artifacts are distinguishable from the
+    // installed app. We have to use `cp -R` because there are symlinks in
+    // the bundle.
     const copy = copy: {
+        const clean = RunStep.create(b, "clean staged app bundle");
+        clean.has_side_effects = true;
+        clean.addArgs(&.{ "rm", "-rf", staging_path });
+        // Remove the old name too in case a previous build left it behind.
+        clean.addArg(b.fmt("{s}/GhosttyX.app", .{b.install_path}));
+
         const step = RunStep.create(b, "copy app bundle");
         step.addArgs(&.{ "cp", "-R" });
         step.addFileArg(b.path(app_path));
-        step.addArg(b.fmt("{s}", .{b.install_path}));
+        step.addArg(staging_path);
         step.step.dependOn(&build.step);
+        step.step.dependOn(&clean.step);
         break :copy step;
     };
 

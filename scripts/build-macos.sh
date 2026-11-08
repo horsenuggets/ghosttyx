@@ -42,6 +42,7 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 APP_DEST="${APP_DEST:-/Applications}"
 APP_NAME="GhosttyX.app"
+STAGING_NAME="GhosttyX.staging.app"
 
 # --- Resolve the pinned Zig ---------------------------------------------------
 
@@ -224,7 +225,7 @@ cd "$REPO_DIR"
 echo "Building (this compiles the core, the xcframework, and the Xcode app)..."
 "$ZIG_BIN" build -Dxcframework-target=native -Doptimize=ReleaseFast
 
-BUILT_APP="$REPO_DIR/zig-out/$APP_NAME"
+BUILT_APP="$REPO_DIR/zig-out/$STAGING_NAME"
 if [[ ! -d "$BUILT_APP" ]]; then
     echo "Build finished but \"$BUILT_APP\" was not produced." >&2
     exit 1
