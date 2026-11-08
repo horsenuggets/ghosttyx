@@ -17,7 +17,6 @@ const Allocator = std.mem.Allocator;
 const log = std.log.scoped(.renderer_thread);
 
 const DRAW_INTERVAL = 8; // 120 FPS
-const CURSOR_BLINK_INTERVAL = 600;
 
 /// Whether calls to `drawFrame` must be done from the app thread.
 ///
@@ -67,11 +66,6 @@ draw_active: bool = false,
 draw_now: xev.Async,
 draw_now_c: xev.Completion = .{},
 
-/// The timer used for cursor blinking
-cursor_h: xev.Timer,
-cursor_c: xev.Completion = .{},
-cursor_c_cancel: xev.Completion = .{},
-
 /// The surface we're rendering to.
 surface: *apprt.Surface,
 
@@ -92,11 +86,6 @@ app_mailbox: App.Mailbox,
 config: DerivedConfig,
 
 flags: packed struct {
-    /// This is true when a blinking cursor should be visible and false
-    /// when it should not be visible. This is toggled on a timer by the
-    /// thread automatically.
-    cursor_blink_visible: bool = false,
-
     /// This is true when the inspector is active.
     has_inspector: bool = false,
 
@@ -154,10 +143,6 @@ pub fn init(
     var draw_now = try xev.Async.init();
     errdefer draw_now.deinit();
 
-    // Setup a timer for blinking the cursor
-    var cursor_timer = try xev.Timer.init();
-    errdefer cursor_timer.deinit();
-
     // The mailbox for messaging this thread
     var mailbox = try Mailbox.create(alloc);
     errdefer mailbox.destroy(alloc);
@@ -171,7 +156,6 @@ pub fn init(
         .render_h = render_h,
         .draw_h = draw_h,
         .draw_now = draw_now,
-        .cursor_h = cursor_timer,
         .surface = surface,
         .renderer = renderer_impl,
         .state = state,
@@ -188,7 +172,6 @@ pub fn deinit(self: *Thread) void {
     self.render_h.deinit();
     self.draw_h.deinit();
     self.draw_now.deinit();
-    self.cursor_h.deinit();
     self.loop.deinit();
 
     // Nothing can possibly access the mailbox anymore, destroy it.
@@ -243,16 +226,6 @@ fn threadMain_(self: *Thread) !void {
     // Send an initial wakeup message so that we render right away.
     try self.wakeup.notify();
 
-    // Start blinking the cursor.
-    self.cursor_h.run(
-        &self.loop,
-        &self.cursor_c,
-        cursorBlinkInterval(),
-        Thread,
-        self,
-        cursorTimerCallback,
-    );
-
     // Start the draw timer
     self.syncDrawTimer();
 
@@ -294,6 +267,12 @@ fn setQosClass(self: *const Thread) void {
 
 fn syncDrawTimer(self: *Thread) void {
     skip: {
+        if (!self.flags.visible or self.renderer.hasVsync()) {
+            self.draw_active = false;
+            return;
+        }
+        if (self.flags.focused and self.renderer.hasCursorAnimation()) break :skip;
+
         // If our renderer supports animations and has them, then we
         // can apply draw timer based on custom shader animation configuration.
         if (@hasDecl(rendererpkg.Renderer, "hasAnimations") and
@@ -363,10 +342,7 @@ fn drainMailbox(self: *Thread) !void {
                 // If we became visible then we immediately rebuild cells
                 // (renderCallback skips updateFrame while invisible) and draw.
                 if (v) {
-                    self.renderer.updateFrame(
-                        self.state,
-                        self.flags.cursor_blink_visible,
-                    ) catch |err|
+                    self.renderer.updateFrame(self.state) catch |err|
                         log.warn("error rendering on visibility regain err={}", .{err});
                     self.drawFrame(false);
                 }
@@ -374,12 +350,7 @@ fn drainMailbox(self: *Thread) !void {
                 // Notify the renderer so it can update any state.
                 self.renderer.setVisible(v);
 
-                // Note that we're explicitly today not stopping any
-                // cursor timers, draw timers, etc. These things have very
-                // little resource cost and properly maintaining their active
-                // state across different transitions is going to be bug-prone,
-                // so its easier to just let them keep firing and have them
-                // check the visible state themselves to control their behavior.
+                self.syncDrawTimer();
             },
 
             .focus => |v| focus: {
@@ -398,51 +369,10 @@ fn drainMailbox(self: *Thread) !void {
                 // We always resync our draw timer (may disable it)
                 self.syncDrawTimer();
 
-                if (!v) {
-                    // If we're not focused, then we stop the cursor blink
-                    if (self.cursor_c.state() == .active and
-                        self.cursor_c_cancel.state() == .dead)
-                    {
-                        self.cursor_h.cancel(
-                            &self.loop,
-                            &self.cursor_c,
-                            &self.cursor_c_cancel,
-                            void,
-                            null,
-                            cursorCancelCallback,
-                        );
-                    }
-                } else {
-                    // If we're focused, we immediately show the cursor again
-                    // and then restart the timer.
-                    if (self.cursor_c.state() != .active) {
-                        self.flags.cursor_blink_visible = true;
-                        self.cursor_h.run(
-                            &self.loop,
-                            &self.cursor_c,
-                            cursorBlinkInterval(),
-                            Thread,
-                            self,
-                            cursorTimerCallback,
-                        );
-                    }
-                }
+                if (v) self.renderer.resetCursorBlink();
             },
 
-            .reset_cursor_blink => {
-                self.flags.cursor_blink_visible = true;
-                if (self.cursor_c.state() == .active) {
-                    self.cursor_h.reset(
-                        &self.loop,
-                        &self.cursor_c,
-                        &self.cursor_c_cancel,
-                        cursorBlinkInterval(),
-                        Thread,
-                        self,
-                        cursorTimerCallback,
-                    );
-                }
-            },
+            .reset_cursor_blink => self.renderer.resetCursorBlink(),
 
             .font_grid => |grid| {
                 self.renderer.setFontGrid(grid.grid);
@@ -617,76 +547,12 @@ fn renderCallback(
     if (!t.flags.visible) return .disarm;
 
     // Update our frame data
-    t.renderer.updateFrame(
-        t.state,
-        t.flags.cursor_blink_visible,
-    ) catch |err|
+    t.renderer.updateFrame(t.state) catch |err|
         log.warn("error rendering err={}", .{err});
+    t.syncDrawTimer();
 
     // Draw
     t.drawFrame(false);
-
-    return .disarm;
-}
-
-fn cursorTimerCallback(
-    self_: ?*Thread,
-    _: *xev.Loop,
-    _: *xev.Completion,
-    r: xev.Timer.RunError!void,
-) xev.CallbackAction {
-    _ = r catch |err| switch (err) {
-        // This is sent when our timer is canceled. That's fine.
-        error.Canceled => return .disarm,
-
-        else => {
-            log.warn("error in cursor timer callback err={}", .{err});
-            unreachable;
-        },
-    };
-
-    const t: *Thread = self_ orelse {
-        // This shouldn't happen so we log it.
-        log.warn("render callback fired without data set", .{});
-        return .disarm;
-    };
-
-    t.flags.cursor_blink_visible = !t.flags.cursor_blink_visible;
-    t.wakeup.notify() catch {};
-
-    t.cursor_h.run(
-        &t.loop,
-        &t.cursor_c,
-        cursorBlinkInterval(),
-        Thread,
-        t,
-        cursorTimerCallback,
-    );
-    return .disarm;
-}
-
-fn cursorCancelCallback(
-    _: ?*void,
-    _: *xev.Loop,
-    _: *xev.Completion,
-    r: xev.Timer.CancelError!void,
-) xev.CallbackAction {
-    // This makes it easier to work across platforms where different platforms
-    // support different sets of errors, so we just unify it.
-    const CancelError = xev.Timer.CancelError || error{
-        Canceled,
-        NotFound,
-        Unexpected,
-    };
-
-    _ = r catch |err| switch (@as(CancelError, @errorCast(err))) {
-        error.Canceled => {}, // success
-        error.NotFound => {}, // completed before it could cancel
-        else => {
-            log.warn("error in cursor cancel callback err={}", .{err});
-            unreachable;
-        },
-    };
 
     return .disarm;
 }
@@ -706,20 +572,4 @@ fn stopCallback(
     _ = r catch unreachable;
     self_.?.loop.stop();
     return .disarm;
-}
-
-/// Returns the interval for the blinking cursor in milliseconds.
-fn cursorBlinkInterval() u64 {
-    if (std.valgrind.runningOnValgrind() > 0) {
-        // If we're running under Valgrind, the cursor blink adds enough
-        // churn that it makes some stalls annoying unless you're on a
-        // super powerful computer, so we delay it.
-        //
-        // This is a hack, we should change some of our cursor timer
-        // logic to be more efficient:
-        // https://github.com/ghostty-org/ghostty/issues/8003
-        return CURSOR_BLINK_INTERVAL * 5;
-    }
-
-    return CURSOR_BLINK_INTERVAL;
 }

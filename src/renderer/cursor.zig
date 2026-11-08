@@ -1,6 +1,47 @@
 const std = @import("std");
 const terminal = @import("../terminal/main.zig");
 
+const BLINK_INTERVAL = 600 * std.time.ns_per_ms;
+const BLINK_PERIOD = 4 * std.time.ns_per_s / 3;
+
+/// Whether the visible cursor should animate rather than remain steady.
+pub fn blinking(state: *const terminal.RenderState, opts: StyleOptions) bool {
+    return state.cursor.blinking and
+        state.cursor.visible and
+        state.cursor.viewport != null and
+        !state.cursor.password_input and
+        !opts.preedit and
+        opts.focused;
+}
+
+/// A full-opacity pause after input, then VS Code's smooth blink at 0.75x speed.
+pub fn opacity(elapsed_ns: u64) f32 {
+    if (elapsed_ns <= BLINK_INTERVAL) return 1;
+    const phase = (elapsed_ns - BLINK_INTERVAL) % BLINK_PERIOD;
+    const ms: f64 = @as(f64, @floatFromInt(phase)) * 1000 / BLINK_PERIOD;
+    if (ms <= 100 or ms >= 900) return 1;
+    if (ms >= 300 and ms <= 700) return 0;
+    return @floatCast(if (ms < 300)
+        1 - easeInOut((ms - 100) / 200)
+    else
+        easeInOut((ms - 700) / 200));
+}
+
+/// Evaluate CSS cubic-bezier(0.42, 0, 0.58, 1), inverting its time axis.
+fn easeInOut(time: f64) f64 {
+    var lower: f64 = 0;
+    var upper: f64 = 1;
+    for (0..24) |_| {
+        const s = (lower + upper) / 2;
+        const inverse = 1 - s;
+        const x = 3 * inverse * inverse * s * 0.42 +
+            3 * inverse * s * s * 0.58 + s * s * s;
+        if (x < time) lower = s else upper = s;
+    }
+    const s = (lower + upper) / 2;
+    return 3 * (1 - s) * s * s + s * s * s;
+}
+
 /// Available cursor styles for drawing that renderers must support.
 /// This is a superset of terminal cursor styles since the renderer supports
 /// some additional cursor states such as the hollow block.
@@ -65,6 +106,78 @@ pub fn style(
 
     // Otherwise, we use whatever style the terminal wants.
     return .fromTerminal(state.cursor.visual_style);
+}
+
+test "cursor: fade timing" {
+    const testing = std.testing;
+    try testing.expectEqual(@as(f32, 1), opacity(0));
+    try testing.expectEqual(@as(f32, 1), opacity(BLINK_INTERVAL));
+    const samples = [_]struct { ms: u64, alpha: f32 }{
+        .{ .ms = 0, .alpha = 1 },
+        .{ .ms = 100, .alpha = 1 },
+        .{ .ms = 150, .alpha = 0.8708381 },
+        .{ .ms = 200, .alpha = 0.5 },
+        .{ .ms = 250, .alpha = 0.1291619 },
+        .{ .ms = 300, .alpha = 0 },
+        .{ .ms = 500, .alpha = 0 },
+        .{ .ms = 700, .alpha = 0 },
+        .{ .ms = 750, .alpha = 0.1291619 },
+        .{ .ms = 800, .alpha = 0.5 },
+        .{ .ms = 850, .alpha = 0.8708381 },
+        .{ .ms = 900, .alpha = 1 },
+        .{ .ms = 1000, .alpha = 1 },
+    };
+    for (samples) |sample| {
+        try testing.expectApproxEqAbs(
+            sample.alpha,
+            opacity(BLINK_INTERVAL + sample.ms * BLINK_PERIOD / 1000),
+            0.00001,
+        );
+    }
+    for (0..2600) |ms| {
+        const elapsed = ms * std.time.ns_per_ms;
+        const value = opacity(elapsed);
+        try testing.expect(value >= 0 and value <= 1);
+        try testing.expectEqual(value, opacity(elapsed));
+        try testing.expect(@abs(value - opacity(elapsed + std.time.ns_per_ms)) < 0.009);
+        if (elapsed >= BLINK_INTERVAL) {
+            try testing.expectEqual(value, opacity(elapsed + BLINK_PERIOD));
+        }
+    }
+}
+
+test "cursor: fade visibility overrides" {
+    const testing = std.testing;
+    const alloc = testing.allocator;
+    var term: terminal.Terminal = try .init(alloc, .{ .cols = 10, .rows = 10 });
+    defer term.deinit(alloc);
+    var state: terminal.RenderState = .empty;
+    defer state.deinit(alloc);
+    try state.update(alloc, &term);
+
+    // Exhaust the independent visibility and editing conditions.
+    for (0..128) |bits| {
+        const focused = bits & 1 != 0;
+        const preedit = bits & 2 != 0;
+        const visible = bits & 4 != 0;
+        const blink = bits & 8 != 0;
+        const password = bits & 16 != 0;
+        const in_viewport = bits & 32 != 0;
+        const blink_visible = bits & 64 != 0;
+        state.cursor.visible = visible;
+        state.cursor.blinking = blink;
+        state.cursor.password_input = password;
+        state.cursor.viewport = if (in_viewport) .{ .x = 0, .y = 0, .wide_tail = false } else null;
+        const opts: StyleOptions = .{
+            .focused = focused,
+            .preedit = preedit,
+            .blink_visible = blink_visible,
+        };
+        try testing.expectEqual(
+            focused and !preedit and visible and blink and !password and in_viewport,
+            blinking(&state, opts),
+        );
+    }
 }
 
 test "cursor: default uses configured style" {

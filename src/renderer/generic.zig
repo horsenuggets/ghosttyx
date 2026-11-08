@@ -13,6 +13,7 @@ const math = @import("../math.zig");
 const Surface = @import("../Surface.zig");
 const link = @import("link.zig");
 const cellpkg = @import("cell.zig");
+const cursorpkg = @import("cursor.zig");
 const noMinContrast = cellpkg.noMinContrast;
 const constraintWidth = cellpkg.constraintWidth;
 const isCovering = cellpkg.isCovering;
@@ -42,6 +43,54 @@ const DisplayLink = switch (builtin.os.tag) {
 };
 
 const log = std.log.scoped(.generic_renderer);
+
+fn shaderAnimationEnabled(policy: configpkg.CustomShaderAnimation, focused: bool) bool {
+    return switch (policy) {
+        .always => true,
+        .true => focused,
+        .false => false,
+    };
+}
+
+test "cursor: shader animation policy remains independent of cursor frames" {
+    const testing = std.testing;
+    for ([_]bool{ false, true }) |focused| {
+        try testing.expect(shaderAnimationEnabled(.always, focused));
+        try testing.expectEqual(focused, shaderAnimationEnabled(.true, focused));
+        try testing.expect(!shaderAnimationEnabled(.false, focused));
+    }
+}
+
+/// Cell buffer contents cached independently by each swap-chain frame.
+const CellBufferCache = struct {
+    generation: ?u64 = null,
+    foreground_count: usize = 0,
+
+    fn needsUpload(self: CellBufferCache, generation: u64) bool {
+        return self.generation == null or self.generation.? != generation;
+    }
+};
+
+test "cursor: fade frames reuse cell buffers across the swap chain" {
+    const testing = std.testing;
+    var frames = [_]CellBufferCache{.{}} ** 3;
+    for (&frames) |*frame| {
+        try testing.expect(frame.needsUpload(0));
+        frame.* = .{ .generation = 0, .foreground_count = 12 };
+    }
+    for (0..12) |i| {
+        const frame = &frames[i % frames.len];
+        try testing.expect(!frame.needsUpload(0));
+        try testing.expectEqual(@as(usize, 12), frame.foreground_count);
+    }
+    for (&frames) |*frame| {
+        try testing.expect(frame.needsUpload(1));
+        frame.* = .{ .generation = 1, .foreground_count = 4 };
+        try testing.expect(!frame.needsUpload(1));
+        try testing.expectEqual(@as(usize, 4), frame.foreground_count);
+    }
+    try testing.expect(frames[0].needsUpload(2));
+}
 
 /// Create a renderer type with the provided graphics API wrapper.
 ///
@@ -151,6 +200,11 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
         /// to determine if any possible changes have been made to the
         /// cells for the draw call.
         cells_rebuilt: bool = false,
+        cells_generation: u64 = 0,
+
+        /// Cursor animation only changes uniforms, not the terminal cell buffers.
+        cursor_blinking: bool = false,
+        cursor_blink_start: ?std.time.Instant = null,
 
         /// The current GPU uniform values.
         uniforms: shaderpkg.Uniforms,
@@ -314,6 +368,7 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
             uniforms: UniformBuffer,
             cells: CellTextBuffer,
             cells_bg: CellBgBuffer,
+            cells_cache: CellBufferCache = .{},
 
             grayscale: Texture,
             grayscale_modified: usize = 0,
@@ -559,6 +614,7 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
             min_contrast: f32,
             padding_color: configpkg.WindowPaddingColor,
             custom_shaders: configpkg.RepeatablePath,
+            custom_shader_animation: configpkg.CustomShaderAnimation,
             bg_image: ?configpkg.Path,
             bg_image_opacity: f32,
             bg_image_position: configpkg.BackgroundImagePosition,
@@ -633,6 +689,7 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
                     .search_selected_foreground = config.@"search-selected-foreground",
 
                     .custom_shaders = custom_shaders,
+                    .custom_shader_animation = config.@"custom-shader-animation",
                     .bg_image = bg_image,
                     .bg_image_opacity = config.@"background-image-opacity",
                     .bg_image_position = config.@"background-image-position",
@@ -1008,10 +1065,21 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
             };
         }
 
+        pub fn hasCursorAnimation(self: *const Self) bool {
+            return self.cursor_blinking and self.focused;
+        }
+
+        pub fn resetCursorBlink(self: *Self) void {
+            self.draw_mutex.lock();
+            defer self.draw_mutex.unlock();
+            self.cursor_blink_start = null;
+        }
+
         /// True if our renderer has animations so that a higher frequency
         /// timer is used.
         pub fn hasAnimations(self: *const Self) bool {
-            return self.has_custom_shaders;
+            return self.has_custom_shaders and
+                shaderAnimationEnabled(self.config.custom_shader_animation, self.focused);
         }
 
         /// True if our renderer is using vsync. If true, the renderer or apprt
@@ -1123,7 +1191,6 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
         pub fn updateFrame(
             self: *Self,
             state: *renderer.State,
-            cursor_blink_visible: bool,
         ) Allocator.Error!void {
             // const start = std.time.Instant.now() catch unreachable;
             // const start_micro = std.time.microTimestamp();
@@ -1360,14 +1427,19 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
                 self.draw_mutex.lock();
                 defer self.draw_mutex.unlock();
 
+                const cursor_options: cursorpkg.StyleOptions = .{
+                    .preedit = critical.preedit != null,
+                    .focused = self.focused,
+                    .blink_visible = true,
+                };
+                const cursor_blinking = cursorpkg.blinking(&self.terminal_state, cursor_options);
+                if (self.cursor_blinking != cursor_blinking) self.cursor_blink_start = null;
+                self.cursor_blinking = cursor_blinking;
+
                 // Build our GPU cells
                 self.rebuildCells(
                     critical.preedit,
-                    renderer.cursorStyle(&self.terminal_state, .{
-                        .preedit = critical.preedit != null,
-                        .focused = self.focused,
-                        .blink_visible = cursor_blink_visible,
-                    }),
+                    renderer.cursorStyle(&self.terminal_state, cursor_options),
                     &critical.links,
                 ) catch |err| {
                     // This means we weren't able to allocate our buffer
@@ -1472,13 +1544,23 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
                 self.size.screen.width != surface_size.width or
                 self.size.screen.height != surface_size.height;
 
+            const cursor_opacity: f32 = if (self.hasCursorAnimation()) opacity: {
+                const now = try std.time.Instant.now();
+                const start = self.cursor_blink_start orelse now;
+                self.cursor_blink_start = start;
+                break :opacity cursorpkg.opacity(now.since(start));
+            } else 1;
+            const cursor_changed = self.uniforms.cursor_opacity != cursor_opacity;
+            self.uniforms.cursor_opacity = cursor_opacity;
+
             // Conditions under which we need to draw the frame, otherwise we
             // don't need to since the previous frame should be identical.
-            const needs_redraw =
+            const update_shader_uniforms =
                 size_changed or
                 self.cells_rebuilt or
                 self.hasAnimations() or
                 sync;
+            const needs_redraw = cursor_changed or update_shader_uniforms;
 
             if (!needs_redraw) {
                 // We still need to present the last target again, because the
@@ -1552,13 +1634,20 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
             // Upload the background image to the GPU as necessary.
             try self.uploadBackgroundImage();
 
-            // Update per-frame custom shader uniforms.
-            try self.updateCustomShaderUniformsForFrame();
+            // Cursor-only frames must not advance disabled shader animations.
+            if (update_shader_uniforms) try self.updateCustomShaderUniformsForFrame();
 
             // Setup our frame data
             try frame.uniforms.sync(&.{self.uniforms});
-            try frame.cells_bg.sync(self.cells.bg_cells);
-            const fg_count = try frame.cells.syncFromArrayLists(self.cells.fg_rows.lists);
+            if (frame.cells_cache.needsUpload(self.cells_generation)) {
+                try frame.cells_bg.sync(self.cells.bg_cells);
+                const foreground_count = try frame.cells.syncFromArrayLists(self.cells.fg_rows.lists);
+                frame.cells_cache = .{
+                    .generation = self.cells_generation,
+                    .foreground_count = foreground_count,
+                };
+            }
+            const fg_count = frame.cells_cache.foreground_count;
 
             // If our background image buffer has changed, sync it.
             if (frame.bg_image_buffer_modified != self.bg_image_buffer_modified) {
@@ -2600,6 +2689,7 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
 
             // Update that our cells rebuilt
             self.cells_rebuilt = true;
+            self.cells_generation +%= 1;
 
             // Log some things
             // log.debug("rebuildCells complete cached_runs={}", .{

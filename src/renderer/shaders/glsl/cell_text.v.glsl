@@ -138,9 +138,13 @@ void main() {
     // Check if current position is under cursor (including wide cursor)
     bool is_cursor_pos = ((grid_pos.x == cursor_pos.x) || (cursor_wide && (grid_pos.x == (cursor_pos.x + 1)))) && (grid_pos.y == cursor_pos.y);
 
-    // If this cell is the cursor cell, but we're not processing
-    // the cursor glyph itself, then we need to change the color.
-    if ((glyph_bools & IS_CURSOR_GLYPH) == 0 && is_cursor_pos) {
-        out_data.color = load_color(unpack4u8(cursor_color_packed_4u8), use_linear_blending);
+    // Fade the cursor glyph and restore the text underneath to its
+    // ordinary foreground as the cursor disappears.
+    if ((glyph_bools & IS_CURSOR_GLYPH) != 0) {
+        out_data.color *= cursor_opacity;
+    } else if (is_cursor_pos) {
+        out_data.color = mix(out_data.color,
+                load_color(unpack4u8(cursor_color_packed_4u8), true),
+                cursor_opacity);
     }
 }

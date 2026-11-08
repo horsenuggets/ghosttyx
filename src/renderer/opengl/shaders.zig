@@ -190,6 +190,7 @@ pub const Uniforms = extern struct {
     /// The cursor position and color.
     cursor_pos: [2]u16 align(4),
     cursor_color: [4]u8 align(4),
+    cursor_opacity: f32 align(4) = 1,
 
     /// The background color for the whole surface.
     bg_color: [4]u8 align(4),
@@ -229,6 +230,54 @@ pub const Uniforms = extern struct {
         _padding: u28 = 0,
     };
 };
+
+test "cursor: OpenGL uniform layout" {
+    const testing = std.testing;
+    try testing.expectEqual(@as(usize, 128), @offsetOf(Uniforms, "cursor_opacity"));
+    try testing.expectEqual(@as(usize, 132), @offsetOf(Uniforms, "bg_color"));
+    try testing.expectEqual(@as(usize, 136), @offsetOf(Uniforms, "bools"));
+    try testing.expectEqual(@as(usize, 144), @sizeOf(Uniforms));
+}
+
+test "cursor: OpenGL shaders" {
+    const glslang = @import("glslang");
+    const c = glslang.c;
+    try glslang.testing.ensureInit();
+    var shaders: [2]*glslang.Shader = undefined;
+    var initialized: usize = 0;
+    defer for (shaders[0..initialized]) |shader| shader.delete();
+    const program = try glslang.Program.create();
+    defer program.delete();
+    const sources = .{
+        loadShaderCode("../shaders/glsl/cell_text.v.glsl"),
+        loadShaderCode("../shaders/glsl/cell_text.f.glsl"),
+    };
+    const stages = .{ c.GLSLANG_STAGE_VERTEX, c.GLSLANG_STAGE_FRAGMENT };
+    inline for (sources, stages, 0..) |source, stage, i| {
+        const input: c.glslang_input_t = .{
+            .language = c.GLSLANG_SOURCE_GLSL,
+            .stage = stage,
+            .client = c.GLSLANG_CLIENT_NONE,
+            .client_version = 0,
+            .target_language = c.GLSLANG_TARGET_NONE,
+            .target_language_version = 0,
+            .code = source.ptr,
+            .default_version = 430,
+            .default_profile = c.GLSLANG_NO_PROFILE,
+            .force_default_version_and_profile = 0,
+            .forward_compatible = 0,
+            .messages = c.GLSLANG_MSG_DEFAULT_BIT,
+            .resource = c.glslang_default_resource(),
+        };
+        const shader = try glslang.Shader.create(&input);
+        shaders[i] = shader;
+        initialized += 1;
+        try shader.preprocess(&input);
+        try shader.parse(&input);
+        program.addShader(shader);
+    }
+    try program.link(c.GLSLANG_MSG_DEFAULT_BIT);
+}
 
 /// This is a single parameter for the terminal cell shader.
 pub const CellText = extern struct {
