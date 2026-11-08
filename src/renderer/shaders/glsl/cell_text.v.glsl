@@ -144,7 +144,7 @@ void main() {
         out_data.color *= cursor_opacity;
     } else if (is_cursor_pos) {
         out_data.color = mix(out_data.color,
-                load_color(unpack4u8(cursor_color_packed_4u8), use_linear_blending),
+                load_color(unpack4u8(cursor_color_packed_4u8), true),
                 cursor_opacity);
     }
 }

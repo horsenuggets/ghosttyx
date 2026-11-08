@@ -44,6 +44,37 @@ const DisplayLink = switch (builtin.os.tag) {
 
 const log = std.log.scoped(.generic_renderer);
 
+/// Cell buffer contents cached independently by each swap-chain frame.
+const CellBufferCache = struct {
+    generation: ?u64 = null,
+    foreground_count: usize = 0,
+
+    fn needsUpload(self: CellBufferCache, generation: u64) bool {
+        return self.generation == null or self.generation.? != generation;
+    }
+};
+
+test "cursor: fade frames reuse cell buffers across the swap chain" {
+    const testing = std.testing;
+    var frames = [_]CellBufferCache{.{}} ** 3;
+    for (&frames) |*frame| {
+        try testing.expect(frame.needsUpload(0));
+        frame.* = .{ .generation = 0, .foreground_count = 12 };
+    }
+    for (0..12) |i| {
+        const frame = &frames[i % frames.len];
+        try testing.expect(!frame.needsUpload(0));
+        try testing.expectEqual(@as(usize, 12), frame.foreground_count);
+    }
+    for (&frames) |*frame| {
+        try testing.expect(frame.needsUpload(1));
+        frame.* = .{ .generation = 1, .foreground_count = 4 };
+        try testing.expect(!frame.needsUpload(1));
+        try testing.expectEqual(@as(usize, 4), frame.foreground_count);
+    }
+    try testing.expect(frames[0].needsUpload(2));
+}
+
 /// Create a renderer type with the provided graphics API wrapper.
 ///
 /// The graphics API wrapper must provide the interface outlined below.
@@ -152,6 +183,7 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
         /// to determine if any possible changes have been made to the
         /// cells for the draw call.
         cells_rebuilt: bool = false,
+        cells_generation: u64 = 0,
 
         /// Cursor animation only changes uniforms, not the terminal cell buffers.
         cursor_blinking: bool = false,
@@ -319,6 +351,7 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
             uniforms: UniformBuffer,
             cells: CellTextBuffer,
             cells_bg: CellBgBuffer,
+            cells_cache: CellBufferCache = .{},
 
             grayscale: Texture,
             grayscale_modified: usize = 0,
@@ -1586,8 +1619,15 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
 
             // Setup our frame data
             try frame.uniforms.sync(&.{self.uniforms});
-            try frame.cells_bg.sync(self.cells.bg_cells);
-            const fg_count = try frame.cells.syncFromArrayLists(self.cells.fg_rows.lists);
+            if (frame.cells_cache.needsUpload(self.cells_generation)) {
+                try frame.cells_bg.sync(self.cells.bg_cells);
+                const foreground_count = try frame.cells.syncFromArrayLists(self.cells.fg_rows.lists);
+                frame.cells_cache = .{
+                    .generation = self.cells_generation,
+                    .foreground_count = foreground_count,
+                };
+            }
+            const fg_count = frame.cells_cache.foreground_count;
 
             // If our background image buffer has changed, sync it.
             if (frame.bg_image_buffer_modified != self.bg_image_buffer_modified) {
@@ -2629,6 +2669,7 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
 
             // Update that our cells rebuilt
             self.cells_rebuilt = true;
+            self.cells_generation +%= 1;
 
             // Log some things
             // log.debug("rebuildCells complete cached_runs={}", .{
