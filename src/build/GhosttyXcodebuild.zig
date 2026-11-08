@@ -177,8 +177,15 @@ pub fn init(
         const clean = RunStep.create(b, "clean staged app bundle");
         clean.has_side_effects = true;
         clean.addArgs(&.{ "rm", "-rf", staging_path });
-        // Remove the old name too in case a previous build left it behind.
-        clean.addArg(b.fmt("{s}/GhosttyX.app", .{b.install_path}));
+
+        // Older builds staged the app under its installed name, so remove that
+        // leftover too. Only do so in the default build directory, since a
+        // custom --prefix may be a real install location where the app has to
+        // survive a failed build.
+        const default_prefix = try b.build_root.join(b.allocator, &.{"zig-out"});
+        if (std.mem.eql(u8, b.install_prefix, default_prefix)) {
+            clean.addArg(b.fmt("{s}/GhosttyX.app", .{b.install_path}));
+        }
 
         const step = RunStep.create(b, "copy app bundle");
         step.addArgs(&.{ "cp", "-R" });
