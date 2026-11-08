@@ -43,6 +43,15 @@ struct TabTitleTypographyTests {
         #expect(font.fontName == "GridfitSymbols-Regular")
     }
 
+    @Test func titlesWithoutCustomFontUseTheNativeRegularFace() throws {
+        let title = "☑ Session"
+        let styled = try #require(TabTitleTypography.attributedTitle(title, font: nil, color: .labelColor))
+        let asciiRange = (title as NSString).range(of: "Session")
+        let font = try #require(styled.attribute(.font, at: asciiRange.location, effectiveRange: nil) as? NSFont)
+        #expect(font.fontName == NSFont.systemFont(ofSize: NSFont.systemFontSize).fontName)
+        #expect(styled.attribute(.foregroundColor, at: asciiRange.location, effectiveRange: nil) == nil)
+    }
+
     @Test func plainTitlesAndExplicitEmojiKeepSystemStyling() {
         for title in ["Session", "◻\u{FE0F} Session", "◼\u{FE0F} Session", "☑\u{FE0F} Session"] {
             #expect(TabTitleTypography.attributedTitle(title, font: nil, color: .labelColor) == nil)
