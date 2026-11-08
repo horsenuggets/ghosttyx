@@ -326,8 +326,8 @@ final class TabTitleEditor: NSObject, NSTextFieldDelegate {
         if attributes[.font] == nil, let font = label.font {
             attributes[.font] = font
         }
-        if let font = attributes[.font] as? NSFont, TabTitleTypography.isSymbolFont(font) {
-            attributes[.font] = titlebarFont ?? NSFont.titleBarFont(ofSize: font.pointSize)
+        if let font = attributes[.font] as? NSFont {
+            attributes[.font] = TabTitleTypography.editorFont(font, windowFont: titlebarFont)
         }
 
         if attributes[.foregroundColor] == nil {

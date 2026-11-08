@@ -628,7 +628,7 @@ class TerminalController: BaseTerminalController, TabGroupCloseCoordinator.Contr
         if let titleFontName = surfaceConfig.windowTitleFontFamily {
             window.titlebarFont = NSFont(name: titleFontName, size: NSFont.systemFontSize)
         } else {
-            window.titlebarFont = nil
+            window.titlebarFont = TabTitleTypography.windowFont
         }
 
         // Call this last in case it uses any of the properties above.
