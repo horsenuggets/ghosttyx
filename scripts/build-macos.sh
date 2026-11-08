@@ -96,19 +96,33 @@ else
     SDK_ROOT="$DEVELOPER_DIR/SDKs"
 fi
 
-# xcrun often reports the MacOSX.sdk symlink rather than the real SDK
-# directory, so follow the symlink chain to get the real directory name, and
-# take the major version from --show-sdk-version (more reliable than the name).
-sdk_path="$(xcrun --show-sdk-path)"
-while [[ -L "$sdk_path" ]]; do
-    target="$(readlink "$sdk_path")"
-    if [[ "$target" == /* ]]; then
-        sdk_path="$target"
-    else
-        sdk_path="$(dirname "$sdk_path")/$target"
+# Follow the symlink chain so SDK aliases resolve to a real directory, and read
+# the version from the SDK itself rather than trusting the directory name.
+resolve_sdk_path() {
+    local path="$1" target
+    while [[ -L "$path" ]]; do
+        target="$(readlink "$path")"
+        if [[ "$target" == /* ]]; then
+            path="$target"
+        else
+            path="$(dirname "$path")/$target"
+        fi
+    done
+    printf '%s\n' "$path"
+}
+
+sdk_version() {
+    local path version
+    path="$(resolve_sdk_path "$1")"
+    version="$(basename "$path")"
+    version="$(sed -n 's/^MacOSX\([0-9][0-9.]*\)\.sdk$/\1/p' <<<"$version")"
+    if [[ -z "$version" && -f "$path/SDKSettings.json" ]]; then
+        version="$(plutil -extract Version raw -o - "$path/SDKSettings.json" 2>/dev/null || true)"
     fi
-done
-NEWEST_SDK="$(basename "$sdk_path")"
+    printf '%s\n' "$version"
+}
+
+NEWEST_SDK="$(basename "$(resolve_sdk_path "$(xcrun --show-sdk-path)")")"
 NEWEST_MAJOR="$(xcrun --show-sdk-version 2>/dev/null | cut -d. -f1)"
 
 # Pick a fallback SDK: an explicit override, otherwise the highest real SDK
@@ -116,15 +130,23 @@ NEWEST_MAJOR="$(xcrun --show-sdk-version 2>/dev/null | cut -d. -f1)"
 # ship only one SDK, so also look in the Command Line Tools, which keep the
 # older SDKs. The fallback is kept as an absolute path since it may live
 # outside the active SDK root.
+CLT_SDK_ROOT="/Library/Developer/CommandLineTools/SDKs"
 FALLBACK_SDK="${GHOSTTYX_FALLBACK_SDK:-}"
 if [[ -n "$FALLBACK_SDK" && "$FALLBACK_SDK" != /* ]]; then
-    FALLBACK_SDK="$SDK_ROOT/$FALLBACK_SDK"
+    # Aliases such as MacOSX15.sdk may live in either root, so look in both.
+    for root in "$SDK_ROOT" "$CLT_SDK_ROOT"; do
+        if [[ -e "$root/$FALLBACK_SDK" ]]; then
+            FALLBACK_SDK="$root/$FALLBACK_SDK"
+            break
+        fi
+    done
+    [[ "$FALLBACK_SDK" == /* ]] || FALLBACK_SDK="$SDK_ROOT/$FALLBACK_SDK"
 fi
 if [[ -z "$FALLBACK_SDK" && -n "$NEWEST_MAJOR" ]]; then
     # Collect every eligible SDK so the newest one wins across all roots,
     # including newer patch releases within the same major version.
     sdk_candidates=()
-    for root in "$SDK_ROOT" /Library/Developer/CommandLineTools/SDKs; do
+    for root in "$SDK_ROOT" "$CLT_SDK_ROOT"; do
         [[ -d "$root" ]] || continue
         while IFS= read -r sdk; do
             [[ -L "$root/$sdk" ]] && continue
@@ -141,6 +163,14 @@ if [[ -z "$FALLBACK_SDK" && -n "$NEWEST_MAJOR" ]]; then
     fi
 fi
 
+if [[ -n "$FALLBACK_SDK" ]]; then
+    FALLBACK_SDK="$(resolve_sdk_path "$FALLBACK_SDK")"
+fi
+if [[ -n "${GHOSTTYX_FALLBACK_SDK:-}" && ! -d "$FALLBACK_SDK" ]]; then
+    echo "Could not find the requested SDK \"$GHOSTTYX_FALLBACK_SDK\"." >&2
+    exit 1
+fi
+
 SHIM_DIR=""
 cleanup_shim() {
     if [[ -n "$SHIM_DIR" ]]; then
@@ -151,8 +181,7 @@ trap cleanup_shim EXIT
 
 if [[ -n "$FALLBACK_SDK" && "$FALLBACK_SDK" != "$SDK_ROOT/$NEWEST_SDK" \
     && -d "$FALLBACK_SDK" ]]; then
-    FALLBACK_VERSION="$(basename "$FALLBACK_SDK" \
-        | sed -n 's/^MacOSX\([0-9][0-9.]*\)\.sdk$/\1/p')"
+    FALLBACK_VERSION="$(sdk_version "$FALLBACK_SDK")"
     echo "Building against $(basename "$FALLBACK_SDK") via an xcrun shim."
 
     SHIM_DIR="$(mktemp -d "${TMPDIR:-/tmp}/ghosttyx-xcrun.XXXXXX")"
