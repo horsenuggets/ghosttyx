@@ -16,14 +16,16 @@
 #      `libSystem.tbd` shipped in the newest macOS SDK, so linking fails with a
 #      wall of "undefined symbol: _sigaction" style errors -- including for
 #      Zig's own build runner, which is why `--sysroot` / `SDKROOT` alone are
-#      not enough (they do not reach the build-runner compile). The script
-#      temporarily makes an older, linkable SDK the default by repointing the
-#      `MacOSX*.sdk` symlinks, builds, then restores the original layout on exit
-#      no matter how the build ends. The newest SDK is left in place, because
-#      xcodebuild resolves `SDKROOT = macosx` to the highest installed SDK and
-#      needs the newer one for the Swift sources. The fallback is taken from the
-#      active Xcode or, when Xcode ships only one SDK, from the Command Line
-#      Tools.
+#      not enough (they do not reach the build-runner compile). Zig asks
+#      `xcrun --show-sdk-path` which SDK to use, and current Xcodes answer
+#      with the real SDK directory rather than the `MacOSX.sdk` symlink, so
+#      repointing the symlinks has no effect. The script puts a temporary
+#      `xcrun` shim on `PATH` for the build that answers SDK queries with an
+#      older, linkable SDK and forwards everything else to the real xcrun. The
+#      newest SDK is left untouched, because xcodebuild resolves
+#      `SDKROOT = macosx` itself and needs it for the Swift sources. The
+#      fallback is taken from the active Xcode or, when Xcode ships only one
+#      SDK, from the Command Line Tools.
 #
 # Usage:
 #     ./scripts/build-macos.sh                        # build + install to /Applications
@@ -32,8 +34,7 @@
 #     GHOSTTYX_FALLBACK_SDK=MacOSX15.sdk ./scripts/build-macos.sh
 #
 # Requirements: macOS, full Xcode reachable through the /usr/local/bin
-# {xcodebuild,metal,metallib} wrappers (see AGENTS.md "Fork Notes"), curl, and
-# sudo (used only for the temporary SDK swap).
+# {xcodebuild,metal,metallib} wrappers (see AGENTS.md "Fork Notes"), and curl.
 
 set -euo pipefail
 
@@ -95,19 +96,33 @@ else
     SDK_ROOT="$DEVELOPER_DIR/SDKs"
 fi
 
-# xcrun often reports the MacOSX.sdk symlink rather than the real SDK
-# directory, so follow the symlink chain to get the real directory name, and
-# take the major version from --show-sdk-version (more reliable than the name).
-sdk_path="$(xcrun --show-sdk-path)"
-while [[ -L "$sdk_path" ]]; do
-    target="$(readlink "$sdk_path")"
-    if [[ "$target" == /* ]]; then
-        sdk_path="$target"
-    else
-        sdk_path="$(dirname "$sdk_path")/$target"
+# Follow the symlink chain so SDK aliases resolve to a real directory, and read
+# the version from the SDK itself rather than trusting the directory name.
+resolve_sdk_path() {
+    local path="$1" target
+    while [[ -L "$path" ]]; do
+        target="$(readlink "$path")"
+        if [[ "$target" == /* ]]; then
+            path="$target"
+        else
+            path="$(dirname "$path")/$target"
+        fi
+    done
+    printf '%s\n' "$path"
+}
+
+sdk_version() {
+    local path version
+    path="$(resolve_sdk_path "$1")"
+    version="$(basename "$path")"
+    version="$(sed -n 's/^MacOSX\([0-9][0-9.]*\)\.sdk$/\1/p' <<<"$version")"
+    if [[ -z "$version" && -f "$path/SDKSettings.json" ]]; then
+        version="$(plutil -extract Version raw -o - "$path/SDKSettings.json" 2>/dev/null || true)"
     fi
-done
-NEWEST_SDK="$(basename "$sdk_path")"
+    printf '%s\n' "$version"
+}
+
+NEWEST_SDK="$(basename "$(resolve_sdk_path "$(xcrun --show-sdk-path)")")"
 NEWEST_MAJOR="$(xcrun --show-sdk-version 2>/dev/null | cut -d. -f1)"
 
 # Pick a fallback SDK: an explicit override, otherwise the highest real SDK
@@ -115,15 +130,23 @@ NEWEST_MAJOR="$(xcrun --show-sdk-version 2>/dev/null | cut -d. -f1)"
 # ship only one SDK, so also look in the Command Line Tools, which keep the
 # older SDKs. The fallback is kept as an absolute path since it may live
 # outside the active SDK root.
+CLT_SDK_ROOT="/Library/Developer/CommandLineTools/SDKs"
 FALLBACK_SDK="${GHOSTTYX_FALLBACK_SDK:-}"
 if [[ -n "$FALLBACK_SDK" && "$FALLBACK_SDK" != /* ]]; then
-    FALLBACK_SDK="$SDK_ROOT/$FALLBACK_SDK"
+    # Aliases such as MacOSX15.sdk may live in either root, so look in both.
+    for root in "$SDK_ROOT" "$CLT_SDK_ROOT"; do
+        if [[ -e "$root/$FALLBACK_SDK" ]]; then
+            FALLBACK_SDK="$root/$FALLBACK_SDK"
+            break
+        fi
+    done
+    [[ "$FALLBACK_SDK" == /* ]] || FALLBACK_SDK="$SDK_ROOT/$FALLBACK_SDK"
 fi
 if [[ -z "$FALLBACK_SDK" && -n "$NEWEST_MAJOR" ]]; then
     # Collect every eligible SDK so the newest one wins across all roots,
     # including newer patch releases within the same major version.
     sdk_candidates=()
-    for root in "$SDK_ROOT" /Library/Developer/CommandLineTools/SDKs; do
+    for root in "$SDK_ROOT" "$CLT_SDK_ROOT"; do
         [[ -d "$root" ]] || continue
         while IFS= read -r sdk; do
             [[ -L "$root/$sdk" ]] && continue
@@ -140,28 +163,59 @@ if [[ -z "$FALLBACK_SDK" && -n "$NEWEST_MAJOR" ]]; then
     fi
 fi
 
-SWAP_DONE=0
-ORIG_DEFAULT="$(readlink "$SDK_ROOT/MacOSX.sdk" 2>/dev/null || true)"
-ORIG_MAJOR="$(readlink "$SDK_ROOT/MacOSX${NEWEST_MAJOR}.sdk" 2>/dev/null || true)"
+if [[ -n "$FALLBACK_SDK" ]]; then
+    FALLBACK_SDK="$(resolve_sdk_path "$FALLBACK_SDK")"
+fi
+if [[ -n "${GHOSTTYX_FALLBACK_SDK:-}" && ! -d "$FALLBACK_SDK" ]]; then
+    echo "Could not find the requested SDK \"$GHOSTTYX_FALLBACK_SDK\"." >&2
+    exit 1
+fi
 
-restore_sdk() {
-    [[ "$SWAP_DONE" == "1" ]] || return 0
-    echo "Restoring original SDK layout..."
-    [[ -n "$ORIG_DEFAULT" ]] && sudo ln -sfn "$ORIG_DEFAULT" "$SDK_ROOT/MacOSX.sdk"
-    [[ -n "$ORIG_MAJOR" ]] && sudo ln -sfn "$ORIG_MAJOR" "$SDK_ROOT/MacOSX${NEWEST_MAJOR}.sdk"
-    rm -rf "$(getconf DARWIN_USER_CACHE_DIR)com.apple.DeveloperTools" 2>/dev/null || true
+SHIM_DIR=""
+cleanup_shim() {
+    if [[ -n "$SHIM_DIR" ]]; then
+        rm -rf "$SHIM_DIR"
+    fi
 }
-trap restore_sdk EXIT
+trap cleanup_shim EXIT
 
 if [[ -n "$FALLBACK_SDK" && "$FALLBACK_SDK" != "$SDK_ROOT/$NEWEST_SDK" \
-    && -d "$SDK_ROOT/$NEWEST_SDK" && ! -L "$SDK_ROOT/$NEWEST_SDK" ]]; then
-    echo "Swapping default SDK for the build: $NEWEST_SDK -> $(basename "$FALLBACK_SDK")"
-    SWAP_DONE=1
-    [[ -n "$ORIG_DEFAULT" ]] && sudo ln -sfn "$FALLBACK_SDK" "$SDK_ROOT/MacOSX.sdk"
-    [[ -n "$ORIG_MAJOR" ]] && sudo ln -sfn "$FALLBACK_SDK" "$SDK_ROOT/MacOSX${NEWEST_MAJOR}.sdk"
-    rm -rf "$(getconf DARWIN_USER_CACHE_DIR)com.apple.DeveloperTools" 2>/dev/null || true
+    && -d "$FALLBACK_SDK" ]]; then
+    FALLBACK_VERSION="$(sdk_version "$FALLBACK_SDK")"
+    echo "Building against $(basename "$FALLBACK_SDK") via an xcrun shim."
+
+    SHIM_DIR="$(mktemp -d "${TMPDIR:-/tmp}/ghosttyx-xcrun.XXXXXX")"
+    cat > "$SHIM_DIR/xcrun" <<EOF
+#!/bin/sh
+# Answer Zig's macOS SDK queries with the fallback SDK and forward everything
+# else to the real xcrun.
+sdk=macosx
+previous=""
+for arg in "\$@"; do
+    if [ "\$previous" = "--sdk" ] || [ "\$previous" = "-sdk" ]; then
+        sdk="\$arg"
+    fi
+    previous="\$arg"
+done
+[ "\$sdk" = "macosx" ] || exec /usr/bin/xcrun "\$@"
+for arg in "\$@"; do
+    case "\$arg" in
+        --show-sdk-path)
+            printf '%s\n' "$FALLBACK_SDK"
+            exit 0
+            ;;
+        --show-sdk-version)
+            printf '%s\n' "$FALLBACK_VERSION"
+            exit 0
+            ;;
+    esac
+done
+exec /usr/bin/xcrun "\$@"
+EOF
+    chmod +x "$SHIM_DIR/xcrun"
+    export PATH="$SHIM_DIR:$PATH"
 else
-    echo "No older SDK swap needed (building against $NEWEST_SDK)."
+    echo "No older SDK needed (building against $NEWEST_SDK)."
 fi
 
 # --- Build and install -------------------------------------------------------
