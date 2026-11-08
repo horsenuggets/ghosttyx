@@ -21,6 +21,7 @@ layout(binding = 1, std140) uniform Globals {
     uniform float min_contrast;
     uniform uint cursor_pos_packed_2u16;
     uniform uint cursor_color_packed_4u8;
+    uniform float cursor_opacity;
     uniform uint bg_color_packed_4u8;
     uniform uint bools;
 };

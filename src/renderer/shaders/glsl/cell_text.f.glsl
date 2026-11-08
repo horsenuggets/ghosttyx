@@ -27,6 +27,10 @@ void main() {
         {
             // Our input color is always linear.
             vec4 color = in_data.color;
+            if (color.a == 0.0) {
+                out_FragColor = vec4(0.0);
+                return;
+            }
 
             // If we're not doing linear blending, then we need to
             // re-apply the gamma encoding to our color manually.

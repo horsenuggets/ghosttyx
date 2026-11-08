@@ -19,6 +19,7 @@ struct Uniforms {
   float min_contrast;
   ushort2 cursor_pos;
   uchar4 cursor_color;
+  float cursor_opacity;
   uchar4 bg_color;
   bool cursor_wide;
   bool use_display_p3;
@@ -662,14 +663,16 @@ vertex CellTextVertexOut cell_text_vertex(
         in.grid_pos.x == uniforms.cursor_pos.x + 1
     ) && in.grid_pos.y == uniforms.cursor_pos.y;
 
-  // If this cell is the cursor cell, but we're not processing
-  // the cursor glyph itself, then we need to change the color.
-  if ((in.bools & IS_CURSOR_GLYPH) == 0 && is_cursor_pos) {
-    out.color = load_color(
+  // Fade the cursor glyph and restore the text underneath to its
+  // ordinary foreground as the cursor disappears.
+  if ((in.bools & IS_CURSOR_GLYPH) != 0) {
+    out.color *= uniforms.cursor_opacity;
+  } else if (is_cursor_pos) {
+    out.color = mix(out.color, load_color(
       uniforms.cursor_color,
       uniforms.use_display_p3,
       true
-    );
+    ), uniforms.cursor_opacity);
   }
 
   return out;
@@ -692,6 +695,7 @@ fragment float4 cell_text_fragment(
     case ATLAS_GRAYSCALE: {
       // Our input color is always linear.
       float4 color = in.color;
+      if (color.a == 0.0) return float4(0.0);
 
       // If we're not doing linear blending, then we need to
       // re-apply the gamma encoding to our color manually.

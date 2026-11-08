@@ -223,6 +223,7 @@ pub const Uniforms = extern struct {
     /// The cursor position and color.
     cursor_pos: [2]u16 align(4),
     cursor_color: [4]u8 align(4),
+    cursor_opacity: f32 align(4) = 1,
 
     /// The background color for the whole surface.
     bg_color: [4]u8 align(4),
@@ -260,6 +261,14 @@ pub const Uniforms = extern struct {
         _padding: u4 = 0,
     };
 };
+
+test "cursor: Metal uniform layout" {
+    const testing = std.testing;
+    try testing.expectEqual(@as(usize, 128), @offsetOf(Uniforms, "cursor_opacity"));
+    try testing.expectEqual(@as(usize, 132), @offsetOf(Uniforms, "bg_color"));
+    try testing.expectEqual(@as(usize, 136), @offsetOf(Uniforms, "bools"));
+    try testing.expectEqual(@as(usize, 144), @sizeOf(Uniforms));
+}
 
 /// This is a single parameter for the terminal cell shader.
 pub const CellText = extern struct {
