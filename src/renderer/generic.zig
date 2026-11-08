@@ -44,6 +44,23 @@ const DisplayLink = switch (builtin.os.tag) {
 
 const log = std.log.scoped(.generic_renderer);
 
+fn shaderAnimationEnabled(policy: configpkg.CustomShaderAnimation, focused: bool) bool {
+    return switch (policy) {
+        .always => true,
+        .true => focused,
+        .false => false,
+    };
+}
+
+test "cursor: shader animation policy remains independent of cursor frames" {
+    const testing = std.testing;
+    for ([_]bool{ false, true }) |focused| {
+        try testing.expect(shaderAnimationEnabled(.always, focused));
+        try testing.expectEqual(focused, shaderAnimationEnabled(.true, focused));
+        try testing.expect(!shaderAnimationEnabled(.false, focused));
+    }
+}
+
 /// Cell buffer contents cached independently by each swap-chain frame.
 const CellBufferCache = struct {
     generation: ?u64 = null,
@@ -597,6 +614,7 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
             min_contrast: f32,
             padding_color: configpkg.WindowPaddingColor,
             custom_shaders: configpkg.RepeatablePath,
+            custom_shader_animation: configpkg.CustomShaderAnimation,
             bg_image: ?configpkg.Path,
             bg_image_opacity: f32,
             bg_image_position: configpkg.BackgroundImagePosition,
@@ -671,6 +689,7 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
                     .search_selected_foreground = config.@"search-selected-foreground",
 
                     .custom_shaders = custom_shaders,
+                    .custom_shader_animation = config.@"custom-shader-animation",
                     .bg_image = bg_image,
                     .bg_image_opacity = config.@"background-image-opacity",
                     .bg_image_position = config.@"background-image-position",
@@ -1059,7 +1078,8 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
         /// True if our renderer has animations so that a higher frequency
         /// timer is used.
         pub fn hasAnimations(self: *const Self) bool {
-            return self.has_custom_shaders;
+            return self.has_custom_shaders and
+                shaderAnimationEnabled(self.config.custom_shader_animation, self.focused);
         }
 
         /// True if our renderer is using vsync. If true, the renderer or apprt
@@ -1535,12 +1555,12 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
 
             // Conditions under which we need to draw the frame, otherwise we
             // don't need to since the previous frame should be identical.
-            const needs_redraw =
+            const update_shader_uniforms =
                 size_changed or
-                cursor_changed or
                 self.cells_rebuilt or
                 self.hasAnimations() or
                 sync;
+            const needs_redraw = cursor_changed or update_shader_uniforms;
 
             if (!needs_redraw) {
                 // We still need to present the last target again, because the
@@ -1614,8 +1634,8 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
             // Upload the background image to the GPU as necessary.
             try self.uploadBackgroundImage();
 
-            // Update per-frame custom shader uniforms.
-            try self.updateCustomShaderUniformsForFrame();
+            // Cursor-only frames must not advance disabled shader animations.
+            if (update_shader_uniforms) try self.updateCustomShaderUniformsForFrame();
 
             // Setup our frame data
             try frame.uniforms.sync(&.{self.uniforms});
