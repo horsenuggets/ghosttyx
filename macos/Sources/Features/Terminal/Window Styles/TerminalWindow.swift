@@ -432,11 +432,14 @@ class TerminalWindow: NSWindow {
     }
 
     private func updateNativeTitleSymbols() {
-        guard titleVisibility == .visible, let field = titlebarTextField, field.stringValue == title else { return }
+        guard titleVisibility == .visible, let field = titlebarTextField else { return }
         let original = field.attributedStringValue
-        let styled = NSMutableAttributedString(attributedString: original)
-        let pointSize = field.font?.pointSize ?? NSFont.systemFontSize
-        if TabTitleTypography.applySymbolFont(to: styled, pointSize: pointSize), !styled.isEqual(to: original) {
+        let styled = TabTitleTypography.nativeTitle(
+            title,
+            original: original,
+            font: titlebarFont ?? field.font ?? .titleBarFont(ofSize: NSFont.systemFontSize)
+        )
+        if !styled.isEqual(to: original) {
             field.attributedStringValue = styled
         }
     }
@@ -452,7 +455,7 @@ class TerminalWindow: NSWindow {
     var attributedTitle: NSAttributedString? {
         TabTitleTypography.attributedTitle(
             title,
-            font: titlebarFont,
+            font: TabTitleTypography.tabFont(forWindowFont: titlebarFont),
             color: isKeyWindow ? .labelColor : .secondaryLabelColor
         )
     }
