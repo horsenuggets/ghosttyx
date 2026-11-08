@@ -69,17 +69,18 @@ struct TabTitleTypographyTests {
         #expect(TabTitleTypography.tabFont(forWindowFont: TabTitleTypography.windowFont) == TabTitleTypography.tabFont)
     }
 
-    @Test func tabTitlesUseLighterWeightWithoutChangingWindowTitles() throws {
+    @Test func tabTitlesUseTheRegularFaceAtTenPoints() throws {
         let windowFont = TabTitleTypography.windowFont
         let tabFont = TabTitleTypography.tabFont
         let windowTraits = CTFontCopyTraits(windowFont) as NSDictionary
         let tabTraits = CTFontCopyTraits(tabFont) as NSDictionary
         let windowWeight = try #require(windowTraits[kCTFontWeightTrait] as? NSNumber)
         let tabWeight = try #require(tabTraits[kCTFontWeightTrait] as? NSNumber)
-        #expect(tabWeight.doubleValue < windowWeight.doubleValue)
-        #expect(tabFont.pointSize == windowFont.pointSize - 1)
+        #expect(abs(tabWeight.doubleValue - windowWeight.doubleValue) < 0.001)
+        #expect(tabFont.pointSize == 10)
         #expect(windowFont.pointSize == NSFont.systemFontSize)
         #expect(windowFont.fontName == "Lexend-Regular")
+        #expect(tabFont.fontName == "Lexend-Regular")
     }
 
     @Test func titlesUseLexendForASCIIAndGridfitForSymbols() throws {
