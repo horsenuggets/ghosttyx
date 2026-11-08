@@ -2096,7 +2096,8 @@ keybind: Keybinds = .{},
 /// The font that will be used for the application's window and tab titles.
 ///
 /// If unset, macOS uses bundled Lexend for title text and Gridfit Mono for
-/// symbols, with smaller, lighter tab titles. GTK uses the system default font.
+/// symbols, with regular 10 pt tab titles and a 13 pt window title. GTK uses
+/// the system default font.
 ///
 /// Note: any font available on the system may be used, this font is not
 /// required to be a fixed-width font.

@@ -2,13 +2,8 @@ import AppKit
 import CoreText
 
 enum TabTitleTypography {
-    static let tabFont: NSFont = {
-        let descriptor = CTFontDescriptorCreateCopyWithAttributes(
-            CTFontCopyFontDescriptor(windowFont),
-            [kCTFontVariationAttribute: [NSNumber(value: 0x77676874): 300]] as CFDictionary
-        )
-        return CTFontCreateWithFontDescriptor(descriptor, windowFont.pointSize - 1, nil) as NSFont
-    }()
+    static let tabFont: NSFont =
+        CTFontCreateCopyWithAttributes(windowFont, 10, nil, nil) as NSFont
 
     static let windowFont: NSFont = {
         func descriptor(_ resource: String, name: String) -> CTFontDescriptor {
