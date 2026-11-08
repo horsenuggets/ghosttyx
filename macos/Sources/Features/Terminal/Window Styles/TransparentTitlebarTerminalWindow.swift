@@ -30,6 +30,15 @@ class TransparentTitlebarTerminalWindow: TerminalWindow {
     override func becomeMain() {
         super.becomeMain()
 
+        // AppKit rebuilds the titlebar and tab bar while a window becomes main,
+        // and a tab created in the background is first synced before those views
+        // exist. Reapply the appearance once they have settled or the titlebar
+        // keeps the default color until the tab is selected again.
+        DispatchQueue.main.async { [weak self] in
+            guard let self, let lastSurfaceConfig = self.lastSurfaceConfig else { return }
+            self.syncAppearance(lastSurfaceConfig)
+        }
+
         guard let lastSurfaceConfig else { return }
         syncAppearance(lastSurfaceConfig)
 
