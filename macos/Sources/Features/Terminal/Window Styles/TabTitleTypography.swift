@@ -18,11 +18,22 @@ enum TabTitleTypography {
     }
 
     static func attributedTitle(_ title: String, font: NSFont?, color: NSColor) -> NSAttributedString? {
-        let baseFont = font ?? .titleBarFont(ofSize: NSFont.systemFontSize)
-        let result = NSMutableAttributedString(string: title, attributes: [
-            .font: baseFont,
-            .foregroundColor: color,
-        ])
+        let result = NSMutableAttributedString(string: title)
+        let fullRange = NSRange(location: 0, length: result.length)
+        let baseFont: NSFont
+        if let font {
+            baseFont = font
+            result.addAttributes(
+                [.font: font, .foregroundColor: color],
+                range: fullRange
+            )
+        } else {
+            // The title bar face is the headline cut, which is bolder than the tab
+            // title's native regular face. Start from the system font so titles
+            // without a custom font keep their original weight.
+            baseFont = .systemFont(ofSize: NSFont.systemFontSize)
+            result.addAttribute(.font, value: baseFont, range: fullRange)
+        }
         let styledSymbols = applySymbolFont(to: result, pointSize: baseFont.pointSize)
         return font != nil || styledSymbols ? result : nil
     }
