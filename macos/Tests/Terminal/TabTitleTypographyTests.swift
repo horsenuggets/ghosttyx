@@ -4,6 +4,36 @@ import Testing
 @testable import Ghostty
 
 struct TabTitleTypographyTests {
+    @Test func missingWindowFontDoesNotSpreadTheLeadingSymbolFont() throws {
+        let text = "☑ Session"
+        var styled = NSAttributedString(string: text)
+        let expected = NSFont.titleBarFont(ofSize: NSFont.systemFontSize)
+        for _ in 0..<2 {
+            styled = TabTitleTypography.nativeTitle(text, original: styled, font: nil)
+            let symbol = try #require(styled.attribute(.font, at: 0, effectiveRange: nil) as? NSFont)
+            #expect(TabTitleTypography.isSymbolFont(symbol))
+            for index in 1..<styled.length {
+                #expect(styled.attribute(.font, at: index, effectiveRange: nil) as? NSFont == expected)
+            }
+        }
+    }
+
+    @Test func renameEditorUsesTheDisplayedTabFontAfterALeadingSymbol() throws {
+        let text = "☑ Session"
+        let custom = NSFont.monospacedSystemFont(ofSize: 16, weight: .medium)
+        for windowFont in [TabTitleTypography.windowFont, custom, nil] as [NSFont?] {
+            let tabFont = TabTitleTypography.tabFont(forWindowFont: windowFont)
+            let styled = try #require(TabTitleTypography.attributedTitle(text, font: tabFont, color: .labelColor))
+            let symbol = try #require(styled.attribute(.font, at: 0, effectiveRange: nil) as? NSFont)
+            let editorFont = TabTitleTypography.editorFont(symbol, windowFont: windowFont)
+            #expect(editorFont == (tabFont ?? NSFont.titleBarFont(ofSize: symbol.pointSize)))
+            let editorTitle = try #require(TabTitleTypography.attributedTitle(text, font: editorFont, color: .labelColor))
+            let editorSymbol = try #require(editorTitle.attribute(.font, at: 0, effectiveRange: nil) as? NSFont)
+            #expect(editorSymbol.pointSize == symbol.pointSize)
+            #expect(TabTitleTypography.editorFont(editorFont, windowFont: windowFont) == editorFont)
+        }
+    }
+
     @Test(arguments: ["~/", "project/", "~/Projects/", "/", "Session", ""])
     func nativeWindowTitlePreservesTheSharedTitle(_ title: String) {
         let original = NSAttributedString(string: "Old title", attributes: [

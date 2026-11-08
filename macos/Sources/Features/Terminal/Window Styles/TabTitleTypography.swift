@@ -43,6 +43,11 @@ enum TabTitleTypography {
         font == windowFont ? tabFont : font
     }
 
+    static func editorFont(_ font: NSFont, windowFont: NSFont?) -> NSFont {
+        guard isSymbolFont(font) else { return font }
+        return tabFont(forWindowFont: windowFont) ?? .titleBarFont(ofSize: font.pointSize)
+    }
+
     static func isSymbolFont(_ font: NSFont) -> Bool {
         bundledSymbolFont.map { ($0 as NSFont).fontName == font.fontName } ?? false
     }
@@ -68,7 +73,8 @@ enum TabTitleTypography {
         return font != nil || styledSymbols ? result : nil
     }
 
-    static func nativeTitle(_ title: String, original: NSAttributedString, font: NSFont) -> NSAttributedString {
+    static func nativeTitle(_ title: String, original: NSAttributedString, font: NSFont?) -> NSAttributedString {
+        let font = font ?? NSFont.titleBarFont(ofSize: NSFont.systemFontSize)
         var attributes = original.length > 0 ? original.attributes(at: 0, effectiveRange: nil) : [:]
         attributes[.font] = font
         let result = NSMutableAttributedString(string: title, attributes: attributes)

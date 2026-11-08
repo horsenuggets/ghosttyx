@@ -437,7 +437,7 @@ class TerminalWindow: NSWindow {
         let styled = TabTitleTypography.nativeTitle(
             title,
             original: original,
-            font: titlebarFont ?? field.font ?? .titleBarFont(ofSize: NSFont.systemFontSize)
+            font: titlebarFont
         )
         if !styled.isEqual(to: original) {
             field.attributedStringValue = styled
