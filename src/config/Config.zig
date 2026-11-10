@@ -7178,15 +7178,21 @@ pub const Keybinds = struct {
             // others are used to these keys so we set them as defaults. If
             // people want to get back to the fixterm encoding they can set
             // the keybinds to `unbind`.
+            //
+            // Cmd+Left and Cmd+Right send the same bytes as the Home and End
+            // keys (following cursor key mode) instead of ctrl+a and ctrl+e,
+            // so programs that bind those control keys to their own actions
+            // don't fire them when the cursor moves to the start or end of a
+            // line.
             try self.set.put(
                 alloc,
                 .{ .key = .{ .physical = .arrow_right }, .mods = .{ .super = true } },
-                .{ .text = "\\x05" },
+                .{ .cursor_key = .{ .normal = "\x1b[F", .application = "\x1bOF" } },
             );
             try self.set.put(
                 alloc,
                 .{ .key = .{ .physical = .arrow_left }, .mods = .{ .super = true } },
-                .{ .text = "\\x01" },
+                .{ .cursor_key = .{ .normal = "\x1b[H", .application = "\x1bOH" } },
             );
             try self.set.put(
                 alloc,
@@ -10937,5 +10943,32 @@ test "compatibility: window new-window" {
             MacOSDockDropBehavior.@"new-window",
             cfg.@"macos-dock-drop-behavior",
         );
+    }
+}
+
+test "default keybinds: cmd+left and cmd+right send home and end" {
+    if (comptime !builtin.target.os.tag.isDarwin()) return error.SkipZigTest;
+
+    const testing = std.testing;
+    var cfg = try Config.default(testing.allocator);
+    defer cfg.deinit();
+
+    const cases = [_]struct {
+        key: inputpkg.Key,
+        normal: []const u8,
+        application: []const u8,
+    }{
+        .{ .key = .arrow_left, .normal = "\x1b[H", .application = "\x1bOH" },
+        .{ .key = .arrow_right, .normal = "\x1b[F", .application = "\x1bOF" },
+    };
+    for (cases) |case| {
+        const entry = cfg.keybind.set.get(.{
+            .key = .{ .physical = case.key },
+            .mods = .{ .super = true },
+        }) orelse return error.TestUnexpectedResult;
+        const action = entry.value_ptr.leaf.action;
+        try testing.expect(action == .cursor_key);
+        try testing.expectEqualStrings(case.normal, action.cursor_key.normal);
+        try testing.expectEqualStrings(case.application, action.cursor_key.application);
     }
 }
