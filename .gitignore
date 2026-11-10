@@ -33,3 +33,7 @@ vgcore.*
 # Extracted zig dependency packages (created by some build flows)
 /zig-pkg/
 /macos/macos/
+
+# Worktrees
+/.worktrees/
+/.wt/
