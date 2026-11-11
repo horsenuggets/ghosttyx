@@ -47,6 +47,22 @@ pub const Flags = packed struct {
     /// if it doesn't exist.
     performable: bool = false,
 
+    /// True if this binding should only be triggered while the running
+    /// program uses legacy key encoding. Once the program enables the kitty
+    /// keyboard protocol, the binding acts as if it doesn't exist and the
+    /// key is encoded and sent to the program as-is.
+    legacy: bool = false,
+
+    /// Writes the config prefixes for these flags (e.g. `legacy:`), so a
+    /// formatted binding parses back with the same flags.
+    pub fn formatPrefix(self: Flags, writer: *std.Io.Writer) std.Io.Writer.Error!void {
+        if (self.all) try writer.writeAll("all:");
+        if (self.global) try writer.writeAll("global:");
+        if (!self.consumed) try writer.writeAll("unconsumed:");
+        if (self.performable) try writer.writeAll("performable:");
+        if (self.legacy) try writer.writeAll("legacy:");
+    }
+
     /// C type
     pub const C = u8;
 
@@ -66,6 +82,7 @@ pub const Flags = packed struct {
         try testing.expectEqual(@as(u8, 0b0101), (Flags{ .global = true }).cval());
         try testing.expectEqual(@as(u8, 0b1001), (Flags{ .performable = true }).cval());
         try testing.expectEqual(@as(u8, 0b1111), (Flags{ .consumed = true, .all = true, .global = true, .performable = true }).cval());
+        try testing.expectEqual(@as(u8, 0b10001), (Flags{ .legacy = true }).cval());
     }
 };
 
@@ -168,6 +185,9 @@ pub const Parser = struct {
             } else if (std.mem.eql(u8, prefix, "performable")) {
                 if (flags.performable) return Error.InvalidFormat;
                 flags.performable = true;
+            } else if (std.mem.eql(u8, prefix, "legacy")) {
+                if (flags.legacy) return Error.InvalidFormat;
+                flags.legacy = true;
             } else {
                 // If we don't recognize the prefix then we're done. We
                 // let any unknown prefix fallthrough to trigger-specific
@@ -2518,7 +2538,9 @@ pub const Set = struct {
         // This is true if we're going to track this entry as
         // a reverse mapping. There are certain scenarios we don't.
         // See the reverse map docs for more information.
-        const track_reverse: bool = !flags.performable;
+        // Legacy bindings only apply in some terminal states, so like
+        // performable ones they must not become unconditional menu shortcuts.
+        const track_reverse: bool = !flags.performable and !flags.legacy;
 
         // No matter what our chained parent becomes invalid because
         // getOrPut invalidates pointers.
@@ -2545,8 +2567,10 @@ pub const Set = struct {
             },
 
             // If we have an existing binding for this trigger, we have to
-            // update the reverse mapping to remove the old action.
-            .leaf => if (track_reverse) {
+            // update the reverse mapping to remove the old action. This
+            // applies even when the new binding isn't tracked, so a stale
+            // shortcut never outlives the binding it came from.
+            .leaf => {
                 const t_hash = t.hash();
                 for (0.., self.reverse.values()) |i, *value| {
                     if (t_hash == value.hash()) {
@@ -2935,6 +2959,17 @@ test "parse: triggers" {
         .action = .{ .ignore = {} },
         .flags = .{ .performable = true },
     }, try parseSingle("performable:shift+a=ignore"));
+
+    // legacy keys
+    try testing.expectEqual(Binding{
+        .trigger = .{
+            .mods = .{ .super = true },
+            .key = .{ .unicode = 'a' },
+        },
+        .action = .{ .ignore = {} },
+        .flags = .{ .legacy = true },
+    }, try parseSingle("legacy:super+a=ignore"));
+    try testing.expectError(Error.InvalidFormat, parseSingle("legacy:legacy:super+a=ignore"));
 
     // invalid key
     try testing.expectError(Error.InvalidFormat, parseSingle("foo=ignore"));
@@ -4093,6 +4128,38 @@ test "set: performable is not part of reverse mappings" {
         const trigger = s.getTrigger(.{ .new_window = {} }).?;
         try testing.expect(trigger.key.unicode == 'a');
     }
+}
+
+test "set: legacy is not part of reverse mappings" {
+    const testing = std.testing;
+    const alloc = testing.allocator;
+
+    var s: Set = .{};
+    defer s.deinit(alloc);
+
+    try s.putFlags(
+        alloc,
+        .{ .key = .{ .unicode = 't' }, .mods = .{ .super = true } },
+        .{ .new_tab = {} },
+        .{ .legacy = true },
+    );
+    try testing.expect(s.getTrigger(.{ .new_tab = {} }) == null);
+}
+
+test "set: replacing with an untracked binding drops the old reverse mapping" {
+    const testing = std.testing;
+    const alloc = testing.allocator;
+
+    var s: Set = .{};
+    defer s.deinit(alloc);
+
+    const trigger: Trigger = .{ .key = .{ .unicode = 't' }, .mods = .{ .super = true } };
+    try s.put(alloc, trigger, .{ .new_tab = {} });
+    try testing.expect(s.getTrigger(.{ .new_tab = {} }) != null);
+
+    // The menu shortcut must not survive once the trigger is legacy-only.
+    try s.putFlags(alloc, trigger, .{ .new_tab = {} }, .{ .legacy = true });
+    try testing.expect(s.getTrigger(.{ .new_tab = {} }) == null);
 }
 
 test "set: overriding a mapping updates reverse" {

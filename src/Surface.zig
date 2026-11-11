@@ -2616,10 +2616,14 @@ pub fn keyEventIsBinding(
     };
 
     // Return flags based on the
-    return switch (entry.value_ptr.*) {
+    const flags: input.Binding.Flags = switch (entry.value_ptr.*) {
         .leader => .{},
         inline .leaf, .leaf_chained => |v| v.flags,
     };
+
+    // A legacy binding doesn't exist while kitty keyboard reporting is on.
+    if (flags.legacy and self.kittyKeyboardEnabled()) return null;
+    return flags;
 }
 
 /// Called for any key events. This handles keybindings, encoding and
@@ -2930,6 +2934,16 @@ fn maybeHandleBinding(
         inline .leaf, .leaf_chained => |leaf| leaf.generic(),
     };
 
+    // Legacy-only bindings step aside once the program enables the kitty
+    // keyboard protocol, so the key is encoded and sent to it instead.
+    // The last trigger is cleared too, otherwise a release matching an earlier
+    // legacy press would be consumed and the program would see an unmatched press.
+    if (leaf.flags.legacy and self.kittyKeyboardEnabled()) {
+        self.keyboard.last_trigger = null;
+        self.endKeySequence(.flush, .retain);
+        return null;
+    }
+
     // consumed determines if the input is consumed or if we continue
     // encoding the key (if we have a key to encode).
     const consumed = consumed: {
@@ -3228,6 +3242,14 @@ fn encodeKey(
     }
 
     return write_req;
+}
+
+/// Returns true if the running program has enabled any kitty keyboard
+/// protocol flags on the active screen.
+fn kittyKeyboardEnabled(self: *Surface) bool {
+    self.renderer_state.mutex.lock();
+    defer self.renderer_state.mutex.unlock();
+    return self.io.terminal.screens.active.kitty_keyboard.current().int() != 0;
 }
 
 fn encodeKeyOpts(self: *const Surface) input.key_encode.Options {

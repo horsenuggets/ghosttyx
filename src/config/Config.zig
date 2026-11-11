@@ -1747,6 +1747,15 @@ class: ?[:0]const u8 = null,
 ///
 ///    Available since: 1.1.0
 ///
+///  * `legacy:`
+///
+///    Only trigger the keybind while the running program uses legacy key
+///    encoding. Once the program enables the kitty keyboard protocol,
+///    Ghostty behaves as if the keybind was not set and sends the key to
+///    the program instead. The macOS "natural text editing" defaults use
+///    this, so `super+arrow_right` sends `ctrl+e` to shells but reaches
+///    programs that read the full key.
+///
 /// Keybind triggers are not unique per prefix combination. For example,
 /// `ctrl+a` and `global:ctrl+a` are not two separate keybinds. The keybind
 /// set later will overwrite the keybind set earlier. In this case, the
@@ -7178,30 +7187,41 @@ pub const Keybinds = struct {
             // others are used to these keys so we set them as defaults. If
             // people want to get back to the fixterm encoding they can set
             // the keybinds to `unbind`.
-            try self.set.put(
+            //
+            // They're `legacy:` bindings, so a program that enables the kitty
+            // keyboard protocol receives the real keys instead. Otherwise a
+            // program that binds ctrl+e to its own action would fire it
+            // whenever Cmd+Right moves to the end of the line.
+            const legacy: inputpkg.Binding.Flags = .{ .legacy = true };
+            try self.set.putFlags(
                 alloc,
                 .{ .key = .{ .physical = .arrow_right }, .mods = .{ .super = true } },
                 .{ .text = "\\x05" },
+                legacy,
             );
-            try self.set.put(
+            try self.set.putFlags(
                 alloc,
                 .{ .key = .{ .physical = .arrow_left }, .mods = .{ .super = true } },
                 .{ .text = "\\x01" },
+                legacy,
             );
-            try self.set.put(
+            try self.set.putFlags(
                 alloc,
                 .{ .key = .{ .physical = .backspace }, .mods = .{ .super = true } },
                 .{ .text = "\\x15" },
+                legacy,
             );
-            try self.set.put(
+            try self.set.putFlags(
                 alloc,
                 .{ .key = .{ .physical = .arrow_left }, .mods = .{ .alt = true } },
                 .{ .esc = "b" },
+                legacy,
             );
-            try self.set.put(
+            try self.set.putFlags(
                 alloc,
                 .{ .key = .{ .physical = .arrow_right }, .mods = .{ .alt = true } },
                 .{ .esc = "f" },
+                legacy,
             );
         }
     }
@@ -7439,6 +7459,7 @@ pub const Keybinds = struct {
             }
 
             var writer: std.Io.Writer = .fixed(&buf);
+            formatFlagPrefix(&writer, v) catch return error.OutOfMemory;
             writer.print("{f}", .{k}) catch return error.OutOfMemory;
             try v.formatEntries(&writer, formatter);
         }
@@ -7455,15 +7476,64 @@ pub const Keybinds = struct {
                 const v = next.value_ptr.*;
 
                 var writer: std.Io.Writer = .fixed(&buf);
-                writer.print("{s}/{f}", .{ table_name, k }) catch return error.OutOfMemory;
+                writer.print("{s}/", .{table_name}) catch return error.OutOfMemory;
+                formatFlagPrefix(&writer, v) catch return error.OutOfMemory;
+                writer.print("{f}", .{k}) catch return error.OutOfMemory;
                 try v.formatEntries(&writer, formatter);
             }
+        }
+    }
+
+    /// Writes the flag prefixes (e.g. `legacy:`) of a binding so the formatted
+    /// entry parses back with the same flags. Sequences carry no prefix.
+    fn formatFlagPrefix(
+        writer: *std.Io.Writer,
+        value: inputpkg.Binding.Set.Value,
+    ) std.Io.Writer.Error!void {
+        switch (value) {
+            .leader => {},
+            inline .leaf, .leaf_chained => |leaf| try leaf.flags.formatPrefix(writer),
         }
     }
 
     /// Used by Formatter
     pub fn formatEntry(self: Keybinds, formatter: formatterpkg.EntryFormatter) !void {
         try self.formatEntryDocs(formatter, false);
+    }
+
+    test "formatEntry keeps binding flags" {
+        const testing = std.testing;
+        var buf: std.Io.Writer.Allocating = .init(testing.allocator);
+        defer buf.deinit();
+
+        var arena = ArenaAllocator.init(testing.allocator);
+        defer arena.deinit();
+        const alloc = arena.allocator();
+
+        var keybinds: Keybinds = .{};
+        try keybinds.parseCLI(alloc, "legacy:super+a=csi:world");
+        try keybinds.parseCLI(alloc, "foo/unconsumed:performable:shift+a=csi:hello");
+        try keybinds.formatEntry(formatterpkg.entryFormatter("keybind", &buf.writer));
+
+        const output = buf.written();
+        try testing.expect(std.mem.indexOf(u8, output, "keybind = legacy:super+a=csi:world\n") != null);
+        try testing.expect(std.mem.indexOf(u8, output, "keybind = foo/unconsumed:performable:shift+a=csi:hello\n") != null);
+
+        // Every formatted entry parses back to the same bindings and flags.
+        var reparsed: Keybinds = .{};
+        var lines = std.mem.splitScalar(u8, output, '\n');
+        while (lines.next()) |line| {
+            if (line.len == 0) continue;
+            const prefix = "keybind = ";
+            try testing.expect(std.mem.startsWith(u8, line, prefix));
+            try reparsed.parseCLI(alloc, line[prefix.len..]);
+        }
+        try testing.expect(keybinds.equal(reparsed));
+        const entry = reparsed.set.get(.{
+            .key = .{ .unicode = 'a' },
+            .mods = .{ .super = true },
+        }) orelse return error.TestUnexpectedResult;
+        try testing.expect(entry.value_ptr.leaf.flags.legacy);
     }
 
     test "parseCLI" {
@@ -10937,5 +11007,31 @@ test "compatibility: window new-window" {
             MacOSDockDropBehavior.@"new-window",
             cfg.@"macos-dock-drop-behavior",
         );
+    }
+}
+
+test "default keybinds: natural text editing is legacy only" {
+    if (comptime !builtin.target.os.tag.isDarwin()) return error.SkipZigTest;
+
+    const testing = std.testing;
+    var cfg = try Config.default(testing.allocator);
+    defer cfg.deinit();
+
+    const cases = [_]struct {
+        key: inputpkg.Key,
+        mods: inputpkg.Mods,
+    }{
+        .{ .key = .arrow_left, .mods = .{ .super = true } },
+        .{ .key = .arrow_right, .mods = .{ .super = true } },
+        .{ .key = .backspace, .mods = .{ .super = true } },
+        .{ .key = .arrow_left, .mods = .{ .alt = true } },
+        .{ .key = .arrow_right, .mods = .{ .alt = true } },
+    };
+    for (cases) |case| {
+        const entry = cfg.keybind.set.get(.{
+            .key = .{ .physical = case.key },
+            .mods = case.mods,
+        }) orelse return error.TestUnexpectedResult;
+        try testing.expect(entry.value_ptr.leaf.flags.legacy);
     }
 }

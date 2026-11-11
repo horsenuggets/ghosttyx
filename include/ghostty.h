@@ -143,6 +143,7 @@ typedef enum {
   GHOSTTY_BINDING_FLAGS_ALL = 1 << 1,
   GHOSTTY_BINDING_FLAGS_GLOBAL = 1 << 2,
   GHOSTTY_BINDING_FLAGS_PERFORMABLE = 1 << 3,
+  GHOSTTY_BINDING_FLAGS_LEGACY = 1 << 4,
 } ghostty_binding_flags_e;
 
 typedef enum {
