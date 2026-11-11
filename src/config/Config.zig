@@ -1747,6 +1747,15 @@ class: ?[:0]const u8 = null,
 ///
 ///    Available since: 1.1.0
 ///
+///  * `legacy:`
+///
+///    Only trigger the keybind while the running program uses legacy key
+///    encoding. Once the program enables the kitty keyboard protocol,
+///    Ghostty behaves as if the keybind was not set and sends the key to
+///    the program instead. The macOS "natural text editing" defaults use
+///    this, so `super+arrow_right` sends `ctrl+e` to shells but reaches
+///    programs that read the full key.
+///
 /// Keybind triggers are not unique per prefix combination. For example,
 /// `ctrl+a` and `global:ctrl+a` are not two separate keybinds. The keybind
 /// set later will overwrite the keybind set earlier. In this case, the
@@ -7179,35 +7188,40 @@ pub const Keybinds = struct {
             // people want to get back to the fixterm encoding they can set
             // the keybinds to `unbind`.
             //
-            // Cmd+Left and Cmd+Right send the same bytes as the Home and End
-            // keys (following cursor key mode) instead of ctrl+a and ctrl+e,
-            // so programs that bind those control keys to their own actions
-            // don't fire them when the cursor moves to the start or end of a
-            // line.
-            try self.set.put(
+            // They're `legacy:` bindings, so a program that enables the kitty
+            // keyboard protocol receives the real keys instead. Otherwise a
+            // program that binds ctrl+e to its own action would fire it
+            // whenever Cmd+Right moves to the end of the line.
+            const legacy: inputpkg.Binding.Flags = .{ .legacy = true };
+            try self.set.putFlags(
                 alloc,
                 .{ .key = .{ .physical = .arrow_right }, .mods = .{ .super = true } },
-                .{ .cursor_key = .{ .normal = "\x1b[F", .application = "\x1bOF" } },
+                .{ .text = "\\x05" },
+                legacy,
             );
-            try self.set.put(
+            try self.set.putFlags(
                 alloc,
                 .{ .key = .{ .physical = .arrow_left }, .mods = .{ .super = true } },
-                .{ .cursor_key = .{ .normal = "\x1b[H", .application = "\x1bOH" } },
+                .{ .text = "\\x01" },
+                legacy,
             );
-            try self.set.put(
+            try self.set.putFlags(
                 alloc,
                 .{ .key = .{ .physical = .backspace }, .mods = .{ .super = true } },
                 .{ .text = "\\x15" },
+                legacy,
             );
-            try self.set.put(
+            try self.set.putFlags(
                 alloc,
                 .{ .key = .{ .physical = .arrow_left }, .mods = .{ .alt = true } },
                 .{ .esc = "b" },
+                legacy,
             );
-            try self.set.put(
+            try self.set.putFlags(
                 alloc,
                 .{ .key = .{ .physical = .arrow_right }, .mods = .{ .alt = true } },
                 .{ .esc = "f" },
+                legacy,
             );
         }
     }
@@ -10946,7 +10960,7 @@ test "compatibility: window new-window" {
     }
 }
 
-test "default keybinds: cmd+left and cmd+right send home and end" {
+test "default keybinds: natural text editing is legacy only" {
     if (comptime !builtin.target.os.tag.isDarwin()) return error.SkipZigTest;
 
     const testing = std.testing;
@@ -10955,20 +10969,19 @@ test "default keybinds: cmd+left and cmd+right send home and end" {
 
     const cases = [_]struct {
         key: inputpkg.Key,
-        normal: []const u8,
-        application: []const u8,
+        mods: inputpkg.Mods,
     }{
-        .{ .key = .arrow_left, .normal = "\x1b[H", .application = "\x1bOH" },
-        .{ .key = .arrow_right, .normal = "\x1b[F", .application = "\x1bOF" },
+        .{ .key = .arrow_left, .mods = .{ .super = true } },
+        .{ .key = .arrow_right, .mods = .{ .super = true } },
+        .{ .key = .backspace, .mods = .{ .super = true } },
+        .{ .key = .arrow_left, .mods = .{ .alt = true } },
+        .{ .key = .arrow_right, .mods = .{ .alt = true } },
     };
     for (cases) |case| {
         const entry = cfg.keybind.set.get(.{
             .key = .{ .physical = case.key },
-            .mods = .{ .super = true },
+            .mods = case.mods,
         }) orelse return error.TestUnexpectedResult;
-        const action = entry.value_ptr.leaf.action;
-        try testing.expect(action == .cursor_key);
-        try testing.expectEqualStrings(case.normal, action.cursor_key.normal);
-        try testing.expectEqualStrings(case.application, action.cursor_key.application);
+        try testing.expect(entry.value_ptr.leaf.flags.legacy);
     }
 }

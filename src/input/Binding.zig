@@ -47,6 +47,12 @@ pub const Flags = packed struct {
     /// if it doesn't exist.
     performable: bool = false,
 
+    /// True if this binding should only be triggered while the running
+    /// program uses legacy key encoding. Once the program enables the kitty
+    /// keyboard protocol, the binding acts as if it doesn't exist and the
+    /// key is encoded and sent to the program as-is.
+    legacy: bool = false,
+
     /// C type
     pub const C = u8;
 
@@ -66,6 +72,7 @@ pub const Flags = packed struct {
         try testing.expectEqual(@as(u8, 0b0101), (Flags{ .global = true }).cval());
         try testing.expectEqual(@as(u8, 0b1001), (Flags{ .performable = true }).cval());
         try testing.expectEqual(@as(u8, 0b1111), (Flags{ .consumed = true, .all = true, .global = true, .performable = true }).cval());
+        try testing.expectEqual(@as(u8, 0b10001), (Flags{ .legacy = true }).cval());
     }
 };
 
@@ -168,6 +175,9 @@ pub const Parser = struct {
             } else if (std.mem.eql(u8, prefix, "performable")) {
                 if (flags.performable) return Error.InvalidFormat;
                 flags.performable = true;
+            } else if (std.mem.eql(u8, prefix, "legacy")) {
+                if (flags.legacy) return Error.InvalidFormat;
+                flags.legacy = true;
             } else {
                 // If we don't recognize the prefix then we're done. We
                 // let any unknown prefix fallthrough to trigger-specific
@@ -2935,6 +2945,17 @@ test "parse: triggers" {
         .action = .{ .ignore = {} },
         .flags = .{ .performable = true },
     }, try parseSingle("performable:shift+a=ignore"));
+
+    // legacy keys
+    try testing.expectEqual(Binding{
+        .trigger = .{
+            .mods = .{ .super = true },
+            .key = .{ .unicode = 'a' },
+        },
+        .action = .{ .ignore = {} },
+        .flags = .{ .legacy = true },
+    }, try parseSingle("legacy:super+a=ignore"));
+    try testing.expectError(Error.InvalidFormat, parseSingle("legacy:legacy:super+a=ignore"));
 
     // invalid key
     try testing.expectError(Error.InvalidFormat, parseSingle("foo=ignore"));
