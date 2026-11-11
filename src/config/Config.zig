@@ -7459,6 +7459,7 @@ pub const Keybinds = struct {
             }
 
             var writer: std.Io.Writer = .fixed(&buf);
+            formatFlagPrefix(&writer, v) catch return error.OutOfMemory;
             writer.print("{f}", .{k}) catch return error.OutOfMemory;
             try v.formatEntries(&writer, formatter);
         }
@@ -7475,15 +7476,64 @@ pub const Keybinds = struct {
                 const v = next.value_ptr.*;
 
                 var writer: std.Io.Writer = .fixed(&buf);
-                writer.print("{s}/{f}", .{ table_name, k }) catch return error.OutOfMemory;
+                writer.print("{s}/", .{table_name}) catch return error.OutOfMemory;
+                formatFlagPrefix(&writer, v) catch return error.OutOfMemory;
+                writer.print("{f}", .{k}) catch return error.OutOfMemory;
                 try v.formatEntries(&writer, formatter);
             }
+        }
+    }
+
+    /// Writes the flag prefixes (e.g. `legacy:`) of a binding so the formatted
+    /// entry parses back with the same flags. Sequences carry no prefix.
+    fn formatFlagPrefix(
+        writer: *std.Io.Writer,
+        value: inputpkg.Binding.Set.Value,
+    ) std.Io.Writer.Error!void {
+        switch (value) {
+            .leader => {},
+            inline .leaf, .leaf_chained => |leaf| try leaf.flags.formatPrefix(writer),
         }
     }
 
     /// Used by Formatter
     pub fn formatEntry(self: Keybinds, formatter: formatterpkg.EntryFormatter) !void {
         try self.formatEntryDocs(formatter, false);
+    }
+
+    test "formatEntry keeps binding flags" {
+        const testing = std.testing;
+        var buf: std.Io.Writer.Allocating = .init(testing.allocator);
+        defer buf.deinit();
+
+        var arena = ArenaAllocator.init(testing.allocator);
+        defer arena.deinit();
+        const alloc = arena.allocator();
+
+        var keybinds: Keybinds = .{};
+        try keybinds.parseCLI(alloc, "legacy:super+a=csi:world");
+        try keybinds.parseCLI(alloc, "foo/unconsumed:performable:shift+a=csi:hello");
+        try keybinds.formatEntry(formatterpkg.entryFormatter("keybind", &buf.writer));
+
+        const output = buf.written();
+        try testing.expect(std.mem.indexOf(u8, output, "keybind = legacy:super+a=csi:world\n") != null);
+        try testing.expect(std.mem.indexOf(u8, output, "keybind = foo/unconsumed:performable:shift+a=csi:hello\n") != null);
+
+        // Every formatted entry parses back to the same bindings and flags.
+        var reparsed: Keybinds = .{};
+        var lines = std.mem.splitScalar(u8, output, '\n');
+        while (lines.next()) |line| {
+            if (line.len == 0) continue;
+            const prefix = "keybind = ";
+            try testing.expect(std.mem.startsWith(u8, line, prefix));
+            try reparsed.parseCLI(alloc, line[prefix.len..]);
+        }
+        try testing.expect(keybinds.equal(reparsed));
+        const entry = reparsed.set.get(.{
+            .key = .{ .unicode = 'a' },
+            .mods = .{ .super = true },
+        }) orelse return error.TestUnexpectedResult;
+        try testing.expect(entry.value_ptr.leaf.flags.legacy);
     }
 
     test "parseCLI" {
