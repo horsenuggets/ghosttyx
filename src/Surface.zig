@@ -2616,10 +2616,14 @@ pub fn keyEventIsBinding(
     };
 
     // Return flags based on the
-    return switch (entry.value_ptr.*) {
+    const flags: input.Binding.Flags = switch (entry.value_ptr.*) {
         .leader => .{},
         inline .leaf, .leaf_chained => |v| v.flags,
     };
+
+    // A legacy binding doesn't exist while kitty keyboard reporting is on.
+    if (flags.legacy and self.kittyKeyboardEnabled()) return null;
+    return flags;
 }
 
 /// Called for any key events. This handles keybindings, encoding and
@@ -2932,7 +2936,10 @@ fn maybeHandleBinding(
 
     // Legacy-only bindings step aside once the program enables the kitty
     // keyboard protocol, so the key is encoded and sent to it instead.
+    // The last trigger is cleared too, otherwise a release matching an earlier
+    // legacy press would be consumed and the program would see an unmatched press.
     if (leaf.flags.legacy and self.kittyKeyboardEnabled()) {
+        self.keyboard.last_trigger = null;
         self.endKeySequence(.flush, .retain);
         return null;
     }
