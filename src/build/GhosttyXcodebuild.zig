@@ -8,6 +8,7 @@ const Docs = @import("GhosttyDocs.zig");
 const I18n = @import("GhosttyI18n.zig");
 const Resources = @import("GhosttyResources.zig");
 const XCFramework = @import("GhosttyXCFramework.zig");
+const XcodeEnvironment = @import("XcodeEnvironment.zig");
 
 build: *std.Build.Step.Run,
 open: *std.Build.Step.Run,
@@ -57,18 +58,15 @@ pub fn init(
         // External environment variables can mess up xcodebuild, so
         // we create a new empty environment.
         const env_map = try b.allocator.create(std.process.EnvMap);
-        env_map.* = .init(b.allocator);
-        if (env.get("PATH")) |v| try env_map.put("PATH", v);
+        env_map.* = try XcodeEnvironment.create(b.allocator, &env);
 
         const step = RunStep.create(b, "xcodebuild");
         step.has_side_effects = true;
         step.cwd = b.path("macos");
         step.env_map = env_map;
-        // /usr/local/bin/xcodebuild wrapper: sets DEVELOPER_DIR=Xcode for
-        // this invocation while leaving xcode-select on CommandLineTools
-        // for Zig's libc detection (Zig 0.15.2 vs Xcode 26.5 SDK link bug).
         step.addArgs(&.{
-            "/usr/local/bin/xcodebuild",
+            "/usr/bin/xcrun",
+            "xcodebuild",
             "-target",
             "Ghostty",
             "-configuration",
@@ -96,15 +94,15 @@ pub fn init(
 
     const xctest = xctest: {
         const env_map = try b.allocator.create(std.process.EnvMap);
-        env_map.* = .init(b.allocator);
-        if (env.get("PATH")) |v| try env_map.put("PATH", v);
+        env_map.* = try XcodeEnvironment.create(b.allocator, &env);
 
         const step = RunStep.create(b, "xcodebuild test");
         step.has_side_effects = true;
         step.cwd = b.path("macos");
         step.env_map = env_map;
         step.addArgs(&.{
-            "/usr/local/bin/xcodebuild",
+            "/usr/bin/xcrun",
+            "xcodebuild",
             "test",
             "-scheme",
             "Ghostty",
