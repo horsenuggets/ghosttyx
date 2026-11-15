@@ -113,6 +113,7 @@ class ToolchainTests(unittest.TestCase):
             helper = root / "python3"
             helper.write_text(
                 '#!/bin/sh\nif [ "$2" = "--sdk" ]; then\n'
+                '    [ -z "${SDKROOT:-}" ] || exit 9\n'
                 '    printf "%s\\n" /sdk\nelse\n'
                 '    printf "%s\\n" "$TEST_COMPILER"\nfi\n'
             )
@@ -127,6 +128,7 @@ class ToolchainTests(unittest.TestCase):
                 "APP_DEST": str(destination),
                 "GHOSTTYX_CODESIGN_IDENTITY": "-",
                 "PATH": str(root) + os.pathsep + os.environ["PATH"],
+                "SDKROOT": "/unrelated-sdk",
                 "TEST_COMPILER": str(compiler),
             })
             result = subprocess.run(

@@ -31,7 +31,7 @@ fi
 
 # An inherited SDKROOT can point at unrelated Command Line Tools, even when
 # xcode-select selects a full Xcode. Keep the compiler and SDK from one toolchain.
-SDKROOT="$(python3 "$SCRIPT_DIR/macos-toolchain.py" --sdk)"
+SDKROOT="$(env -u SDKROOT python3 "$SCRIPT_DIR/macos-toolchain.py" --sdk)"
 export SDKROOT
 ZIG_BIN="$(python3 "$SCRIPT_DIR/macos-toolchain.py")"
 echo "Using Zig at \"$ZIG_BIN\" with SDK \"$SDKROOT\"."
