@@ -39,5 +39,5 @@ A file for [guiding coding agents](https://agents.md/).
 
 This is the GhosttyX fork (`horsenuggets/ghosttyx`). It has diverged from
 upstream `ghostty-org/ghostty` and is the source of truth for the
-GhosttyX.app installed at `/Applications/GhosttyX.app`. Changes ship by
-committing directly to this fork's `main` (no upstream PRs).
+GhosttyX.app installed at `/Applications/GhosttyX.app`. Changes ship through a
+branch and pull request to this fork's `main`, never through an upstream PR.
