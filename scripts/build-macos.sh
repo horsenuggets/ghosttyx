@@ -123,8 +123,16 @@ sdk_version() {
     printf '%s\n' "$version"
 }
 
-NEWEST_SDK="$(basename "$(resolve_sdk_path "$(xcrun --show-sdk-path)")")"
-NEWEST_MAJOR="$(xcrun --show-sdk-version 2>/dev/null | cut -d. -f1)"
+NEWEST_SDK_PATH="$(xcrun --show-sdk-path)"
+NEWEST_SDK="$(basename "$(resolve_sdk_path "$NEWEST_SDK_PATH")")"
+# Read the version from the SDK itself. `xcrun --show-sdk-version` can fail when
+# xcrun reports a Command Line Tools SDK while xcode-select points at Xcode, and
+# under `set -e` that failure ended the script without a message.
+NEWEST_MAJOR="$(sdk_version "$NEWEST_SDK_PATH" | cut -d. -f1)"
+if [[ -z "$NEWEST_MAJOR" ]]; then
+    echo "Could not read the version of the SDK at \"$NEWEST_SDK_PATH\"." >&2
+    exit 1
+fi
 
 # Pick a fallback SDK: an explicit override, otherwise the highest real SDK
 # directory whose major version is lower than the newest SDK's. Current Xcodes
