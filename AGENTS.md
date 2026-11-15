@@ -10,8 +10,11 @@ A file for [guiding coding agents](https://agents.md/).
     compilation.
   - **Build + install the macOS app:** `./scripts/build-macos.sh`. This handles
     the pinned Zig version and the older-SDK override required to link on
-    current macOS (see that script's header and the Fork Notes below), then
-    installs `GhosttyX.app` to `/Applications`.
+    current macOS (see that script's header and the Fork Notes below), signs
+    the app, then installs `GhosttyX.app` to `/Applications`.
+    `GHOSTTYX_CODESIGN_IDENTITY` must name a code signing identity (or be `-`
+    for ad hoc), since a stable signature is what keeps macOS privacy
+    permissions from resetting after every build.
 - **Test (Zig):** `zig build test`
   - Prefer to run targeted tests with `-Dtest-filter` because the full
     test suite is slow to run.

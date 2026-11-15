@@ -27,11 +27,22 @@
 #      fallback is taken from the active Xcode or, when Xcode ships only one
 #      SDK, from the Command Line Tools.
 #
+#   3. The Xcode project signs ad hoc, so macOS identifies each build by its
+#      exact hash and forgets privacy permissions (Screen Recording,
+#      Accessibility, and so on) after every rebuild. The script re-signs the
+#      app with the identity in GHOSTTYX_CODESIGN_IDENTITY, which keeps the
+#      app's identity stable across builds so permissions stick.
+#
 # Usage:
-#     ./scripts/build-macos.sh                        # build + install to /Applications
+#     GHOSTTYX_CODESIGN_IDENTITY=<identity> ./scripts/build-macos.sh
 #     APP_DEST="$HOME/Applications" ./scripts/build-macos.sh
 #     ZIG=/path/to/zig ./scripts/build-macos.sh       # use a specific zig binary
 #     GHOSTTYX_FALLBACK_SDK=MacOSX15.sdk ./scripts/build-macos.sh
+#
+# GHOSTTYX_CODESIGN_IDENTITY is required. Set it to the name or SHA-1 hash of a
+# code signing identity from `security find-identity -v -p codesigning`, or to
+# "-" to keep the ad hoc signature and accept that permissions reset on every
+# build.
 #
 # Requirements: macOS, full Xcode reachable through the /usr/local/bin
 # {xcodebuild,metal,metallib} wrappers (see AGENTS.md "Fork Notes"), and curl.
@@ -43,6 +54,20 @@ REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 APP_DEST="${APP_DEST:-/Applications}"
 APP_NAME="GhosttyX.app"
 STAGING_NAME="GhosttyX.staging.app"
+
+# --- Check the signing identity -----------------------------------------------
+
+# Checked before the long build so a missing identity fails right away.
+if [[ -z "${GHOSTTYX_CODESIGN_IDENTITY:-}" ]]; then
+    echo "GHOSTTYX_CODESIGN_IDENTITY is not set. Set it to a code signing identity" >&2
+    echo "from \"security find-identity -v -p codesigning\", or to \"-\" to sign ad hoc." >&2
+    exit 1
+fi
+if [[ "$GHOSTTYX_CODESIGN_IDENTITY" != "-" ]] \
+    && ! security find-identity -v -p codesigning | grep -qF "$GHOSTTYX_CODESIGN_IDENTITY"; then
+    echo "The signing identity \"$GHOSTTYX_CODESIGN_IDENTITY\" was not found in the keychain." >&2
+    exit 1
+fi
 
 # --- Resolve the pinned Zig ---------------------------------------------------
 
@@ -123,8 +148,16 @@ sdk_version() {
     printf '%s\n' "$version"
 }
 
-NEWEST_SDK="$(basename "$(resolve_sdk_path "$(xcrun --show-sdk-path)")")"
-NEWEST_MAJOR="$(xcrun --show-sdk-version 2>/dev/null | cut -d. -f1)"
+NEWEST_SDK_PATH="$(xcrun --show-sdk-path)"
+NEWEST_SDK="$(basename "$(resolve_sdk_path "$NEWEST_SDK_PATH")")"
+# Read the version from the SDK itself. `xcrun --show-sdk-version` can fail when
+# xcrun reports a Command Line Tools SDK while xcode-select points at Xcode, and
+# under `set -e` that failure ended the script without a message.
+NEWEST_MAJOR="$(sdk_version "$NEWEST_SDK_PATH" | cut -d. -f1)"
+if [[ -z "$NEWEST_MAJOR" ]]; then
+    echo "Could not read the version of the SDK at \"$NEWEST_SDK_PATH\"." >&2
+    exit 1
+fi
 
 # Pick a fallback SDK: an explicit override, otherwise the highest real SDK
 # directory whose major version is lower than the newest SDK's. Current Xcodes
@@ -229,6 +262,38 @@ BUILT_APP="$REPO_DIR/zig-out/$STAGING_NAME"
 if [[ ! -d "$BUILT_APP" ]]; then
     echo "Build finished but \"$BUILT_APP\" was not produced." >&2
     exit 1
+fi
+
+# --- Sign ----------------------------------------------------------------------
+
+if [[ "$GHOSTTYX_CODESIGN_IDENTITY" == "-" ]]; then
+    echo "Keeping the ad hoc signature."
+else
+    echo "Signing with \"$GHOSTTYX_CODESIGN_IDENTITY\"..."
+
+    # Nested code has to be signed before whatever contains it, so collect every
+    # bundle and Mach-O file inside the app and sign the deepest paths first.
+    # Each one keeps its own entitlements and flags, such as the hardened
+    # runtime.
+    nested_code=()
+    while IFS= read -r path; do
+        nested_code+=("$path")
+    done < <(
+        {
+            find "$BUILT_APP/Contents" -type d \( -name '*.app' -o -name '*.appex' \
+                -o -name '*.bundle' -o -name '*.framework' -o -name '*.plugin' \
+                -o -name '*.xpc' \)
+            find "$BUILT_APP/Contents" -type f -perm -u+x \
+                -exec sh -c 'file -b "$1" | grep -q "Mach-O"' _ {} \; -print
+        } | awk -F/ '{ print NF "\t" $0 }' | sort -rn | cut -f2-
+    )
+
+    for path in "${nested_code[@]}" "$BUILT_APP"; do
+        codesign --force --sign "$GHOSTTYX_CODESIGN_IDENTITY" --timestamp=none \
+            --preserve-metadata=entitlements,flags "$path"
+    done
+
+    codesign --verify --deep --strict "$BUILT_APP"
 fi
 
 echo "Installing to \"$APP_DEST/$APP_NAME\"..."
