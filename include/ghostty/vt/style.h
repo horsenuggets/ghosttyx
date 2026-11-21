@@ -50,6 +50,7 @@ typedef enum GHOSTTY_ENUM_TYPED {
   GHOSTTY_STYLE_COLOR_NONE = 0,
   GHOSTTY_STYLE_COLOR_PALETTE = 1,
   GHOSTTY_STYLE_COLOR_RGB = 2,
+  GHOSTTY_STYLE_COLOR_RGBA = 3,
   GHOSTTY_STYLE_COLOR_TAG_MAX_VALUE = GHOSTTY_ENUM_MAX_VALUE,
   } GhosttyStyleColorTag;
 
@@ -63,6 +64,7 @@ typedef enum GHOSTTY_ENUM_TYPED {
 typedef union {
   GhosttyColorPaletteIndex palette;
   GhosttyColorRgb rgb;
+  GhosttyColorRgba rgba;
   uint64_t _padding;
 } GhosttyStyleColorValue;
 
@@ -70,7 +72,8 @@ typedef union {
  * Style color (tagged union).
  *
  * A color used in a style attribute. Can be unset (none), a palette
- * index, or a direct RGB value.
+ * index, a direct RGB value, or a foreground RGBA value. Opaque direct
+ * foreground colors retain the RGB tag for compatibility.
  *
  * @ingroup style
  */

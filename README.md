@@ -38,6 +38,38 @@ for smaller examples of using `libghostty` in C and Zig.
 
 For more details, see [About Ghostty](https://ghostty.org/docs/about).
 
+## Foreground Transparency
+
+Applications can give individual text runs an opacity using the
+[WezTerm RGBA SGR extension](https://github.com/wezterm/wezterm/blob/main/docs/escape-sequences.md)...
+
+```text
+ESC [ 38 : 6 : : R : G : B : A m
+```
+
+Each channel is a decimal integer from `0` to `255`. Alpha `0` makes the foreground fully
+transparent, and `255` makes it fully opaque. For example, this shell command prints
+orange text at approximately half opacity, followed by ordinary text...
+
+```sh
+printf '\033[38:6::255:100:50:128mHalf-opacity text\033[0m Normal text\n'
+```
+
+The rendition applies to subsequently written characters until another foreground color is
+selected, `SGR 39` restores the default foreground, or `SGR 0` resets all attributes.
+Ordinary ANSI, indexed, and RGB foreground colors restore full opacity. Background color
+changes do not reset foreground alpha. Faint multiplies the requested opacity, and
+foreground decorations and color emoji fade with the text.
+
+This blends text over its cell background independently of `background-opacity` and
+`background-opacity-cells`. It does not make an opaque cell background transparent. Only
+foreground RGBA is supported; `48:6` and `58:6` are not implemented.
+
+This is a terminal extension, not a universal ANSI standard. Applications should opt in
+only on terminals known to support it. Truecolor support alone does not imply RGBA
+support, and multiplexers may discard the extension. GhosttyX reports active foreground
+alpha in its SGR status response (DECRQSS).
+
 ## Download
 
 See the [download page](https://ghostty.org/download) on the Ghostty website.

@@ -22,6 +22,9 @@ pub const Style = struct {
     bg_color: Color = .none,
     underline_color: Color = .none,
 
+    /// Opacity of foreground glyphs and decorations, independent of the background.
+    fg_alpha: u8 = 255,
+
     /// On/off attributes that don't require much bit width so we use
     /// a packed struct to make this take up significantly less space.
     flags: Flags = .{},
@@ -94,9 +97,17 @@ pub const Style = struct {
     /// True if the style is equal to another style.
     pub fn eql(self: Style, other: Style) bool {
         return self.flags == other.flags and
+            self.fg_alpha == other.fg_alpha and
             self.fg_color.eql(other.fg_color) and
             self.bg_color.eql(other.bg_color) and
             self.underline_color.eql(other.underline_color);
+    }
+
+    /// Combine foreground opacity with faint using rounded byte multiplication.
+    pub fn foregroundAlpha(self: Style, faint_opacity: u8) u8 {
+        if (!self.flags.faint) return self.fg_alpha;
+        const product = @as(u16, self.fg_alpha) * faint_opacity;
+        return @intCast((product + 127) / 255);
     }
 
     /// Returns the bg color for a cell with this style given the cell
@@ -354,8 +365,15 @@ pub const Style = struct {
                 .dashed => try writer.writeAll("\x1b[4:5m"),
             }
 
-            // Various RGB colors.
-            try self.formatColor(writer, 38, self.style.fg_color);
+            // Foreground alpha uses WezTerm's colon-only RGBA extension.
+            if (self.style.fg_alpha != 255 and self.style.fg_color == .rgb) {
+                const rgb = self.style.fg_color.rgb;
+                try writer.print("\x1b[38:6::{d}:{d}:{d}:{d}m", .{
+                    rgb.r, rgb.g, rgb.b, self.style.fg_alpha,
+                });
+            } else {
+                try self.formatColor(writer, 38, self.style.fg_color);
+            }
             try self.formatColor(writer, 48, self.style.bg_color);
             try self.formatColor(writer, 58, self.style.underline_color);
         }
@@ -402,10 +420,14 @@ pub const Style = struct {
             self: HtmlFormatter,
             writer: *std.Io.Writer,
         ) !void {
-            // Colors
-            try self.formatColor(writer, "color", self.style.fg_color);
-            try self.formatColor(writer, "background-color", self.style.bg_color);
-            try self.formatColor(writer, "text-decoration-color", self.style.underline_color);
+            // Fade only the foreground, never the element's background.
+            var alpha = @as(f64, @floatFromInt(self.style.fg_alpha)) / 255;
+            if (self.style.flags.faint) alpha *= 0.5;
+            try self.formatColor(writer, "color", self.style.fg_color, alpha);
+            try self.formatColor(writer, "background-color", self.style.bg_color, 1);
+            if (self.style.underline_color != .none) {
+                try self.formatColor(writer, "text-decoration-color", self.style.underline_color, alpha);
+            }
 
             // Text decoration line
             const has_line = self.style.flags.underline != .none or
@@ -433,7 +455,6 @@ pub const Style = struct {
 
             if (self.style.flags.bold) try writer.writeAll("font-weight: bold;");
             if (self.style.flags.italic) try writer.writeAll("font-style: italic;");
-            if (self.style.flags.faint) try writer.writeAll("opacity: 0.5;");
             if (self.style.flags.invisible) try writer.writeAll("visibility: hidden;");
             if (self.style.flags.inverse) try writer.writeAll("filter: invert(100%);");
         }
@@ -443,7 +464,34 @@ pub const Style = struct {
             writer: *std.Io.Writer,
             property: []const u8,
             c: Color,
+            alpha: f64,
         ) !void {
+            if (alpha != 1) {
+                switch (c) {
+                    .none => try writer.print(
+                        "{s}: rgb(from currentColor r g b / {d:.6});",
+                        .{ property, alpha },
+                    ),
+                    .palette => |idx| {
+                        if (self.palette) |p| {
+                            const rgb = p[idx];
+                            try writer.print("{s}: rgba({d}, {d}, {d}, {d:.6});", .{
+                                property, rgb.r, rgb.g, rgb.b, alpha,
+                            });
+                        } else {
+                            try writer.print(
+                                "{s}: rgb(from var(--vt-palette-{d}) r g b / {d:.6});",
+                                .{ property, idx, alpha },
+                            );
+                        }
+                    },
+                    .rgb => |rgb| try writer.print("{s}: rgba({d}, {d}, {d}, {d:.6});", .{
+                        property, rgb.r, rgb.g, rgb.b, alpha,
+                    }),
+                }
+                return;
+            }
+
             switch (c) {
                 .none => {},
                 .palette => |idx| {
@@ -481,7 +529,8 @@ pub const Style = struct {
             underline: Data,
         },
         flags: Flags,
-        _padding: u16 = 0,
+        fg_alpha: u8,
+        _padding: u8 = 0,
 
         /// After https://github.com/ziglang/zig/issues/19754 is implemented,
         /// it will be an compiler-error to have packed union fields of
@@ -525,6 +574,7 @@ pub const Style = struct {
                     .underline = .fromColor(style.underline_color),
                 },
                 .flags = style.flags,
+                .fg_alpha = style.fg_alpha,
             };
         }
     };
@@ -1055,6 +1105,102 @@ test "Style HTML formatting palette with palette set emits rgb" {
     formatter.palette = &color.default;
     try builder.writer.print("{f}", .{formatter});
     try testing.expectEqualStrings("background-color: rgb(197, 200, 198);", builder.writer.buffered());
+}
+
+test "Style foreground alpha composition" {
+    const testing = std.testing;
+    for (0..256) |alpha| {
+        for (0..256) |faint| {
+            var style: Style = .{ .fg_alpha = @intCast(alpha) };
+            try testing.expectEqual(@as(u8, @intCast(alpha)), style.foregroundAlpha(@intCast(faint)));
+            style.flags.faint = true;
+            const expected: u8 = @intFromFloat(@round(
+                @as(f64, @floatFromInt(alpha)) * @as(f64, @floatFromInt(faint)) / 255,
+            ));
+            try testing.expectEqual(expected, style.foregroundAlpha(@intCast(faint)));
+        }
+    }
+}
+
+test "Style foreground alpha equality and hashing" {
+    const testing = std.testing;
+    const solid: Style = .{ .fg_color = .{ .rgb = .{ .r = 10, .g = 20, .b = 30 } } };
+    var translucent = solid;
+    translucent.fg_alpha = 128;
+    try testing.expect(!solid.eql(translucent));
+    try testing.expect(solid.hash() != translucent.hash());
+    const duplicate = translucent;
+    try testing.expect(translucent.eql(duplicate));
+    try testing.expectEqual(translucent.hash(), duplicate.hash());
+    try testing.expectEqual(@as(usize, 16), @sizeOf(Style.PackedStyle));
+}
+
+test "Style VT formatting foreground alpha" {
+    const testing = std.testing;
+    for ([_]u8{ 0, 128, 255 }) |alpha| {
+        var builder: std.Io.Writer.Allocating = .init(testing.allocator);
+        defer builder.deinit();
+        const style: Style = .{
+            .fg_color = .{ .rgb = .{ .r = 10, .g = 20, .b = 30 } },
+            .fg_alpha = alpha,
+        };
+        try builder.writer.print("{f}", .{style.formatterVt()});
+        var expected: [64]u8 = undefined;
+        try testing.expectEqualStrings(
+            if (alpha == 255) "\x1b[0m\x1b[38;2;10;20;30m" else try std.fmt.bufPrint(
+                &expected,
+                "\x1b[0m\x1b[38:6::10:20:30:{d}m",
+                .{alpha},
+            ),
+            builder.writer.buffered(),
+        );
+    }
+}
+
+test "Style HTML formatting foreground alpha leaves backgrounds opaque" {
+    const testing = std.testing;
+    for ([_]bool{ false, true }) |faint| {
+        var builder: std.Io.Writer.Allocating = .init(testing.allocator);
+        defer builder.deinit();
+        const style: Style = .{
+            .fg_color = .{ .rgb = .{ .r = 10, .g = 20, .b = 30 } },
+            .bg_color = .{ .rgb = .{ .r = 40, .g = 50, .b = 60 } },
+            .fg_alpha = 128,
+            .flags = .{ .faint = faint, .underline = .single },
+        };
+        try builder.writer.print("{f}", .{style.formatterHtml()});
+        const result = builder.writer.buffered();
+        try testing.expect(std.mem.indexOf(u8, result, "background-color: rgb(40, 50, 60);") != null);
+        try testing.expect(std.mem.indexOf(u8, result, "opacity:") == null);
+        try testing.expect(std.mem.indexOf(u8, result, if (faint)
+            "color: rgba(10, 20, 30, 0.250980);"
+        else
+            "color: rgba(10, 20, 30, 0.501961);") != null);
+    }
+}
+
+test "Style HTML formatting faint foreground alpha with inherited and palette colors" {
+    const testing = std.testing;
+    const cases = .{
+        .{ @as(Style.Color, .none), "color: rgb(from currentColor r g b / 0.500000);" },
+        .{ @as(Style.Color, .{ .palette = 1 }), "color: rgb(from var(--vt-palette-1) r g b / 0.500000);" },
+    };
+    inline for (cases) |case| {
+        var builder: std.Io.Writer.Allocating = .init(testing.allocator);
+        defer builder.deinit();
+        const style: Style = .{ .fg_color = case[0], .flags = .{ .faint = true } };
+        try builder.writer.print("{f}", .{style.formatterHtml()});
+        try testing.expect(std.mem.startsWith(u8, builder.writer.buffered(), case[1]));
+        try testing.expect(std.mem.indexOf(u8, builder.writer.buffered(), "opacity:") == null);
+    }
+
+    var builder: std.Io.Writer.Allocating = .init(testing.allocator);
+    defer builder.deinit();
+    const style: Style = .{ .fg_color = .{ .palette = 1 }, .flags = .{ .faint = true } };
+    var formatter = style.formatterHtml();
+    formatter.palette = &color.default;
+    try builder.writer.print("{f}", .{formatter});
+    try testing.expect(std.mem.startsWith(u8, builder.writer.buffered(), "color: rgba(204, 102, 102, 0.500000);"));
 }
 
 test "Style HTML formatting all palette colors with palette set" {
