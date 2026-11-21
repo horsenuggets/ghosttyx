@@ -1060,6 +1060,78 @@ palette: Palette = .{},
 /// doing so.
 @"background-blur": BackgroundBlur = .false,
 
+/// Overrides the native Liquid Glass backdrop blur radius. This must be a finite,
+/// nonnegative number in native Core Animation radius units. Zero disables this blur.
+///
+/// Only applies when `background-blur` is `macos-glass-regular` or `macos-glass-clear`.
+/// If unset, macOS controls the blur radius. Optical overrides use private macOS APIs;
+/// the app reports a diagnostic if the current macOS version cannot apply an override.
+@"macos-glass-blur-radius": ?f64 = null,
+
+/// Overrides the native Liquid Glass highlight direction, in degrees. This must be a
+/// finite number; negative angles are supported.
+///
+/// Only applies to native macOS glass. If unset, macOS controls the highlight angle.
+/// Optical overrides use private APIs and are diagnosed when unavailable.
+@"macos-glass-highlight-angle": ?f64 = null,
+
+/// Overrides the native Liquid Glass highlight spread, in degrees from 0 through 360.
+/// This must be a finite number.
+///
+/// Only applies to native macOS glass. If unset, macOS controls the highlight spread.
+/// Optical overrides use private APIs and are diagnosed when unavailable.
+@"macos-glass-highlight-spread": ?f64 = null,
+
+/// Overrides the native Liquid Glass highlight amount. This must be a finite,
+/// nonnegative number. Zero disables this highlight.
+///
+/// Only applies to native macOS glass. If unset, macOS controls the highlight amount.
+/// Optical overrides use private APIs and are diagnosed when unavailable.
+@"macos-glass-highlight-strength": ?f64 = null,
+
+/// Overrides the opacity of GhosttyX's additional inactive-window glass tint, from 0
+/// through 1. This must be a finite number. Zero disables the inactive tint overlay.
+///
+/// Only applies to native macOS glass. If unset, the existing light/dark overlay
+/// appearance is preserved. This does not change the active-window glass tint.
+@"macos-glass-inactive-tint-opacity": ?f64 = null,
+
+/// Overrides the saturation multiplier of GhosttyX's inactive-window glass tint.
+/// This must be a finite, nonnegative number. Zero produces a grayscale tint.
+///
+/// Only applies to native macOS glass. If unset, the existing saturation is preserved.
+@"macos-glass-inactive-tint-saturation": ?f64 = null,
+
+/// Overrides the native Liquid Glass inner refraction amount in native Core Animation
+/// displacement units. This must be a finite number. The sign controls the displacement
+/// direction; zero disables this inner refraction.
+///
+/// Only applies to native macOS glass. If unset, macOS controls the refraction amount.
+/// Optical overrides use private APIs and are diagnosed when unavailable.
+@"macos-glass-refraction-amount": ?f64 = null,
+
+/// Overrides the native Liquid Glass inner refraction height in native Core Animation
+/// units. This must be a finite, nonnegative number.
+///
+/// Only applies to native macOS glass. If unset, macOS controls the refraction height.
+/// Optical overrides use private APIs and are diagnosed when unavailable.
+@"macos-glass-refraction-height": ?f64 = null,
+
+/// Overrides the native macOS glass tint color independently of the terminal background.
+/// Specified as either hex (`#RRGGBB` or `RRGGBB`) or a named X11 color.
+///
+/// Only applies to native macOS glass. If unset, the existing background-derived tint
+/// is preserved. This does not change explicit terminal cell background colors.
+@"macos-glass-tint-color": ?Color = null,
+
+/// Overrides the native macOS glass tint opacity independently of `background-opacity`,
+/// from 0 through 1. This must be a finite number. Zero removes the configured color tint
+/// without disabling the native glass material.
+///
+/// Only applies to native macOS glass. If unset, the existing background-derived tint
+/// opacity is preserved. This does not change terminal cell background opacity.
+@"macos-glass-tint-opacity": ?f64 = null,
+
 /// The opacity level (opposite of transparency) of an unfocused split.
 /// Unfocused splits by default are slightly faded out to make it easier to see
 /// which split is focused. To disable this feature, set this value to 1.
@@ -4689,6 +4761,8 @@ pub fn finalize(self: *Config) !void {
     self.@"mouse-scroll-multiplier".precision = @min(10_000.0, @max(0.01, self.@"mouse-scroll-multiplier".precision));
     self.@"mouse-scroll-multiplier".discrete = @min(10_000.0, @max(0.01, self.@"mouse-scroll-multiplier".discrete));
 
+    try self.validateMacOSGlass();
+
     // Clamp our split opacity
     self.@"unfocused-split-opacity" = @min(1.0, @max(0.15, self.@"unfocused-split-opacity"));
 
@@ -4725,6 +4799,259 @@ pub fn finalize(self: *Config) !void {
 
     // Finalize key remapping set for efficient lookups
     self.@"key-remap".finalize();
+}
+
+fn validateMacOSGlass(self: *Config) Allocator.Error!void {
+    inline for (.{
+        "macos-glass-blur-radius",
+        "macos-glass-highlight-strength",
+        "macos-glass-inactive-tint-saturation",
+        "macos-glass-refraction-height",
+    }) |name| {
+        if (@field(self, name)) |value| {
+            if (!std.math.isFinite(value) or value < 0) {
+                try self.addDiagnosticFmt(
+                    "\"{s}\" must be a finite, nonnegative number.",
+                    .{name},
+                );
+                @field(self, name) = null;
+            }
+        }
+    }
+
+    inline for (.{
+        "macos-glass-highlight-angle",
+        "macos-glass-refraction-amount",
+    }) |name| {
+        if (@field(self, name)) |value| {
+            if (!std.math.isFinite(value)) {
+                try self.addDiagnosticFmt("\"{s}\" must be a finite number.", .{name});
+                @field(self, name) = null;
+            }
+        }
+    }
+
+    inline for (.{
+        .{ "macos-glass-highlight-spread", @as(f64, 360) },
+        .{ "macos-glass-inactive-tint-opacity", @as(f64, 1) },
+        .{ "macos-glass-tint-opacity", @as(f64, 1) },
+    }) |entry| {
+        if (@field(self, entry[0])) |value| {
+            if (!std.math.isFinite(value) or value < 0 or value > entry[1]) {
+                try self.addDiagnosticFmt(
+                    "\"{s}\" must be a finite number from 0 through {d}.",
+                    .{ entry[0], entry[1] },
+                );
+                @field(self, entry[0]) = null;
+            }
+        }
+    }
+}
+
+test "macos glass configuration defaults are unset" {
+    const testing = std.testing;
+    var cfg = try Config.default(testing.allocator);
+    defer cfg.deinit();
+
+    inline for (.{
+        "macos-glass-blur-radius",
+        "macos-glass-highlight-angle",
+        "macos-glass-highlight-spread",
+        "macos-glass-highlight-strength",
+        "macos-glass-inactive-tint-opacity",
+        "macos-glass-inactive-tint-saturation",
+        "macos-glass-refraction-amount",
+        "macos-glass-refraction-height",
+        "macos-glass-tint-color",
+        "macos-glass-tint-opacity",
+    }) |name| {
+        try testing.expectEqual(null, @field(cfg, name));
+    }
+    try cfg.validateMacOSGlass();
+    try testing.expectEqual(@as(usize, 0), cfg._diagnostics.items().len);
+}
+
+test "macos glass configuration parsing formatting and reset" {
+    const testing = std.testing;
+    const alloc = testing.allocator;
+    var cfg = try Config.default(alloc);
+    defer cfg.deinit();
+    var args = cli.args.sliceIterator(&.{
+        "--macos-glass-blur-radius=37",
+        "--macos-glass-highlight-angle=-90",
+        "--macos-glass-highlight-spread=240",
+        "--macos-glass-highlight-strength=2.5",
+        "--macos-glass-inactive-tint-opacity=0",
+        "--macos-glass-inactive-tint-saturation=0",
+        "--macos-glass-refraction-amount=-120",
+        "--macos-glass-refraction-height=12",
+        "--macos-glass-tint-color=#123456",
+        "--macos-glass-tint-opacity=0.25",
+    });
+    try cfg.loadIter(alloc, &args);
+    try cfg.validateMacOSGlass();
+    try testing.expectEqual(@as(usize, 0), cfg._diagnostics.items().len);
+
+    inline for (.{
+        .{ "macos-glass-blur-radius", @as(f64, 37) },
+        .{ "macos-glass-highlight-angle", @as(f64, -90) },
+        .{ "macos-glass-highlight-spread", @as(f64, 240) },
+        .{ "macos-glass-highlight-strength", @as(f64, 2.5) },
+        .{ "macos-glass-inactive-tint-opacity", @as(f64, 0) },
+        .{ "macos-glass-inactive-tint-saturation", @as(f64, 0) },
+        .{ "macos-glass-refraction-amount", @as(f64, -120) },
+        .{ "macos-glass-refraction-height", @as(f64, 12) },
+        .{ "macos-glass-tint-opacity", @as(f64, 0.25) },
+    }) |entry| {
+        try testing.expectEqual(@as(?f64, entry[1]), @field(cfg, entry[0]));
+    }
+    try testing.expectEqual(
+        @as(?Color, .{ .r = 0x12, .g = 0x34, .b = 0x56 }),
+        cfg.@"macos-glass-tint-color",
+    );
+
+    var formatted: std.Io.Writer.Allocating = .init(alloc);
+    defer formatted.deinit();
+    inline for (.{
+        "macos-glass-blur-radius",
+        "macos-glass-highlight-angle",
+        "macos-glass-highlight-spread",
+        "macos-glass-highlight-strength",
+        "macos-glass-inactive-tint-opacity",
+        "macos-glass-inactive-tint-saturation",
+        "macos-glass-refraction-amount",
+        "macos-glass-refraction-height",
+        "macos-glass-tint-color",
+        "macos-glass-tint-opacity",
+    }) |name| {
+        const value = @field(cfg, name);
+        try formatterpkg.formatEntry(@TypeOf(value), name, value, &formatted.writer);
+    }
+    var roundtrip = try Config.default(alloc);
+    defer roundtrip.deinit();
+    var reader: std.Io.Reader = .fixed(formatted.written());
+    var lines: cli.args.LineIterator = .{ .r = &reader };
+    try roundtrip.loadIter(alloc, &lines);
+    try roundtrip.validateMacOSGlass();
+    try testing.expectEqual(@as(usize, 0), roundtrip._diagnostics.items().len);
+
+    inline for (.{
+        "macos-glass-blur-radius",
+        "macos-glass-highlight-angle",
+        "macos-glass-highlight-spread",
+        "macos-glass-highlight-strength",
+        "macos-glass-inactive-tint-opacity",
+        "macos-glass-inactive-tint-saturation",
+        "macos-glass-refraction-amount",
+        "macos-glass-refraction-height",
+        "macos-glass-tint-color",
+        "macos-glass-tint-opacity",
+    }) |name| {
+        try testing.expectEqual(@field(cfg, name), @field(roundtrip, name));
+        var reset = cli.args.sliceIterator(&.{"--" ++ name ++ "="});
+        try roundtrip.loadIter(alloc, &reset);
+        try testing.expectEqual(null, @field(roundtrip, name));
+    }
+}
+
+test "macos glass configuration rejects invalid nonnegative values" {
+    const testing = std.testing;
+    inline for (.{
+        "macos-glass-blur-radius",
+        "macos-glass-highlight-strength",
+        "macos-glass-inactive-tint-saturation",
+        "macos-glass-refraction-height",
+    }) |name| {
+        for ([_]f64{ -1, std.math.inf(f64), -std.math.inf(f64), std.math.nan(f64) }) |value| {
+            var cfg = try Config.default(testing.allocator);
+            defer cfg.deinit();
+            @field(cfg, name) = value;
+            try cfg.validateMacOSGlass();
+            try testing.expectEqual(null, @field(cfg, name));
+            try testing.expectEqual(@as(usize, 1), cfg._diagnostics.items().len);
+            try testing.expect(std.mem.indexOf(u8, cfg._diagnostics.items()[0].message, name) != null);
+            try cfg.validateMacOSGlass();
+            try testing.expectEqual(@as(usize, 1), cfg._diagnostics.items().len);
+        }
+        for ([_]f64{ 0, 0.5, 100 }) |value| {
+            var cfg = try Config.default(testing.allocator);
+            defer cfg.deinit();
+            @field(cfg, name) = value;
+            try cfg.validateMacOSGlass();
+            try testing.expectEqual(@as(?f64, value), @field(cfg, name));
+            try testing.expectEqual(@as(usize, 0), cfg._diagnostics.items().len);
+        }
+    }
+}
+
+test "macos glass configuration validates signed finite values" {
+    const testing = std.testing;
+    inline for (.{
+        "macos-glass-highlight-angle",
+        "macos-glass-refraction-amount",
+    }) |name| {
+        for ([_]f64{ std.math.inf(f64), -std.math.inf(f64), std.math.nan(f64) }) |value| {
+            var cfg = try Config.default(testing.allocator);
+            defer cfg.deinit();
+            @field(cfg, name) = value;
+            try cfg.validateMacOSGlass();
+            try testing.expectEqual(null, @field(cfg, name));
+            try testing.expectEqual(@as(usize, 1), cfg._diagnostics.items().len);
+        }
+        for ([_]f64{ -180, 0, 180 }) |value| {
+            var cfg = try Config.default(testing.allocator);
+            defer cfg.deinit();
+            @field(cfg, name) = value;
+            try cfg.validateMacOSGlass();
+            try testing.expectEqual(@as(?f64, value), @field(cfg, name));
+            try testing.expectEqual(@as(usize, 0), cfg._diagnostics.items().len);
+        }
+    }
+}
+
+test "macos glass configuration validates bounded values" {
+    const testing = std.testing;
+    inline for (.{
+        .{ "macos-glass-highlight-spread", @as(f64, 360) },
+        .{ "macos-glass-inactive-tint-opacity", @as(f64, 1) },
+        .{ "macos-glass-tint-opacity", @as(f64, 1) },
+    }) |entry| {
+        for ([_]f64{ -0.1, entry[1] + 0.1, std.math.inf(f64), std.math.nan(f64) }) |value| {
+            var cfg = try Config.default(testing.allocator);
+            defer cfg.deinit();
+            @field(cfg, entry[0]) = value;
+            try cfg.validateMacOSGlass();
+            try testing.expectEqual(null, @field(cfg, entry[0]));
+            try testing.expectEqual(@as(usize, 1), cfg._diagnostics.items().len);
+        }
+        for ([_]f64{ 0, entry[1] / 2, entry[1] }) |value| {
+            var cfg = try Config.default(testing.allocator);
+            defer cfg.deinit();
+            @field(cfg, entry[0]) = value;
+            try cfg.validateMacOSGlass();
+            try testing.expectEqual(@as(?f64, value), @field(cfg, entry[0]));
+            try testing.expectEqual(@as(usize, 0), cfg._diagnostics.items().len);
+        }
+    }
+}
+
+test "macos glass configuration finalization diagnoses parsed invalid values" {
+    const testing = std.testing;
+    var cfg = try Config.default(testing.allocator);
+    defer cfg.deinit();
+    var args = cli.args.sliceIterator(&.{
+        "--macos-glass-blur-radius=-1",
+        "--macos-glass-highlight-angle=nan",
+        "--macos-glass-tint-opacity=1.5",
+        "--macos-glass-refraction-amount=-120",
+    });
+    try cfg.loadIter(testing.allocator, &args);
+    try cfg.finalize();
+    try testing.expectEqual(null, cfg.@"macos-glass-blur-radius");
+    try testing.expectEqual(null, cfg.@"macos-glass-highlight-angle");
+    try testing.expectEqual(null, cfg.@"macos-glass-tint-opacity");
+    try testing.expectEqual(@as(?f64, -120), cfg.@"macos-glass-refraction-amount");
+    try testing.expectEqual(@as(usize, 3), cfg._diagnostics.items().len);
 }
 
 /// Callback for src/cli/args.zig to allow us to handle special cases

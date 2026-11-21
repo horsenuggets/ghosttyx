@@ -100,6 +100,9 @@ private class TerminalGlassView: NSView {
     private let glassEffectView: NSGlassEffectView
     private var topConstraint: NSLayoutConstraint!
     private let tintOverlay: NSView
+    private let nativeOptics = NativeGlassOptics { Ghostty.logger.warning("\($0)") }
+    private var optics = GlassOptics()
+    private var inactiveOpacity: CGFloat = 0
 
     init(topOffset: CGFloat) {
         self.glassEffectView = NSGlassEffectView()
@@ -141,19 +144,27 @@ private class TerminalGlassView: NSView {
         fatalError("init(coder:) has not been implemented")
     }
 
-    /// Configures the glass effect style, tint color, corner radius, and
-    /// updates the inactive tint overlay based on window key status.
+    override func layout() {
+        super.layout()
+        nativeOptics.update(root: glassEffectView.layer, optics: optics)
+    }
+
+    /// Configures native glass and the independent inactive-window overlay.
     func configure(
         style: NSGlassEffectView.Style,
-        backgroundColor: NSColor,
-        backgroundOpacity: Double,
+        appearance: TerminalViewContainer.GlassAppearance,
         cornerRadius: CGFloat?,
+        optics: GlassOptics,
         isKeyWindow: Bool
     ) {
+        self.optics = optics
         glassEffectView.style = style
-        glassEffectView.tintColor = backgroundColor.withAlphaComponent(backgroundOpacity)
+        glassEffectView.tintColor = appearance.tintColor
         glassEffectView.cornerRadius = cornerRadius ?? 0
-        updateKeyStatus(isKeyWindow, backgroundColor: backgroundColor)
+        tintOverlay.layer?.backgroundColor = appearance.inactiveColor.cgColor
+        inactiveOpacity = appearance.inactiveOpacity
+        updateKeyStatus(isKeyWindow)
+        nativeOptics.update(root: glassEffectView.layer, optics: optics)
     }
 
     /// Updates the top inset offset for both the glass effect and tint overlay.
@@ -163,18 +174,8 @@ private class TerminalGlassView: NSView {
     }
 
     /// Updates the tint overlay visibility based on window key status.
-    func updateKeyStatus(_ isKeyWindow: Bool, backgroundColor: NSColor) {
-        let tint = tintProperties(for: backgroundColor)
-        tintOverlay.layer?.backgroundColor = tint.color.cgColor
-        tintOverlay.alphaValue = isKeyWindow ? 0 : tint.opacity
-    }
-
-    /// Computes a saturation-boosted tint color and opacity for the inactive overlay.
-    private func tintProperties(for color: NSColor) -> (color: NSColor, opacity: CGFloat) {
-        let isLight = color.isLightColor
-        let vibrant = color.adjustingSaturation(by: 1.2)
-        let overlayOpacity: CGFloat = isLight ? 0.35 : 0.85
-        return (vibrant, overlayOpacity)
+    func updateKeyStatus(_ isKeyWindow: Bool) {
+        tintOverlay.alphaValue = isKeyWindow ? 0 : inactiveOpacity
     }
 }
 #endif // compiler(>=6.2)
@@ -216,9 +217,9 @@ extension TerminalViewContainer {
 
         effectView.configure(
             style: derivedConfig.style.official,
-            backgroundColor: derivedConfig.backgroundColor,
-            backgroundOpacity: derivedConfig.backgroundOpacity,
+            appearance: derivedConfig.appearance,
             cornerRadius: derivedConfig.cornerRadius,
+            optics: derivedConfig.optics,
             isKeyWindow: window?.isKeyWindow ?? true
         )
 #endif // compiler(>=6.2)
@@ -241,20 +242,40 @@ extension TerminalViewContainer {
 #if compiler(>=6.2)
         guard
             #available(macOS 26.0, *),
-            let effectView = glassEffectView as? TerminalGlassView,
-            let derivedConfig
+            let effectView = glassEffectView as? TerminalGlassView
         else {
             return
         }
-        effectView.updateKeyStatus(isKeyWindow, backgroundColor: derivedConfig.backgroundColor)
+        effectView.updateKeyStatus(isKeyWindow)
 #endif // compiler(>=6.2)
     }
 
+    struct GlassAppearance: Equatable {
+        let tintColor: NSColor
+        let inactiveColor: NSColor
+        let inactiveOpacity: CGFloat
+
+        init(
+            backgroundColor: NSColor,
+            backgroundOpacity: Double,
+            tintColor: NSColor? = nil,
+            tintOpacity: Double? = nil,
+            inactiveTintOpacity: Double? = nil,
+            inactiveTintSaturation: Double? = nil
+        ) {
+            self.tintColor = (tintColor ?? backgroundColor)
+                .withAlphaComponent(tintOpacity ?? backgroundOpacity)
+            inactiveColor = backgroundColor.adjustingSaturation(by: inactiveTintSaturation ?? 1.2)
+            inactiveOpacity = inactiveTintOpacity.map { CGFloat($0) } ??
+                (backgroundColor.isLightColor ? 0.35 : 0.85)
+        }
+    }
+
     struct DerivedConfig: Equatable {
-        let style: BackportNSGlassStyle
-        let backgroundColor: NSColor
-        let backgroundOpacity: Double
+        let appearance: GlassAppearance
         let cornerRadius: CGFloat?
+        let optics: GlassOptics
+        let style: BackportNSGlassStyle
 
         init?(config: Ghostty.Config, preferredBackgroundColor: NSColor?, cornerRadius: CGFloat?) {
             switch config.backgroundBlur {
@@ -265,9 +286,16 @@ extension TerminalViewContainer {
             default:
                 return nil
             }
-            self.backgroundColor = preferredBackgroundColor ?? NSColor(config.backgroundColor)
-            self.backgroundOpacity = config.backgroundOpacity
+            self.appearance = GlassAppearance(
+                backgroundColor: preferredBackgroundColor ?? NSColor(config.backgroundColor),
+                backgroundOpacity: config.backgroundOpacity,
+                tintColor: config.macosGlassTintColor.map { NSColor($0) },
+                tintOpacity: config.macosGlassTintOpacity,
+                inactiveTintOpacity: config.macosGlassInactiveTintOpacity,
+                inactiveTintSaturation: config.macosGlassInactiveTintSaturation
+            )
             self.cornerRadius = cornerRadius
+            self.optics = config.macosGlassOptics
         }
     }
 }

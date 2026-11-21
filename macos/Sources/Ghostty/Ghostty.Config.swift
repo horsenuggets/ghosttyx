@@ -507,6 +507,50 @@ extension Ghostty {
             return BackgroundBlur(fromCValue: v)
         }
 
+#if os(macOS)
+        var macosGlassOptics: GlassOptics {
+            GlassOptics(
+                blurRadius: optionalDouble("macos-glass-blur-radius"),
+                highlightAngle: optionalDouble("macos-glass-highlight-angle"),
+                highlightSpread: optionalDouble("macos-glass-highlight-spread"),
+                highlightStrength: optionalDouble("macos-glass-highlight-strength"),
+                refractionAmount: optionalDouble("macos-glass-refraction-amount"),
+                refractionHeight: optionalDouble("macos-glass-refraction-height")
+            )
+        }
+
+        var macosGlassInactiveTintOpacity: Double? {
+            optionalDouble("macos-glass-inactive-tint-opacity")
+        }
+
+        var macosGlassInactiveTintSaturation: Double? {
+            optionalDouble("macos-glass-inactive-tint-saturation")
+        }
+
+        var macosGlassTintColor: Color? {
+            guard let config else { return nil }
+            var color = ghostty_config_color_s()
+            let key = "macos-glass-tint-color"
+            guard ghostty_config_get(config, &color, key, UInt(key.utf8.count)) else { return nil }
+            return Color(
+                red: Double(color.r) / 255,
+                green: Double(color.g) / 255,
+                blue: Double(color.b) / 255
+            )
+        }
+
+        var macosGlassTintOpacity: Double? {
+            optionalDouble("macos-glass-tint-opacity")
+        }
+
+        private func optionalDouble(_ key: String) -> Double? {
+            guard let config else { return nil }
+            var value: Double = 0
+            guard ghostty_config_get(config, &value, key, UInt(key.utf8.count)) else { return nil }
+            return value
+        }
+#endif
+
         var unfocusedSplitOpacity: Double {
             guard let config = self.config else { return 1 }
             var opacity: Double = 0.85
