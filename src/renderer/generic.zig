@@ -61,6 +61,25 @@ test "cursor: shader animation policy remains independent of cursor frames" {
     }
 }
 
+fn backgroundUsesForeground(inverse: bool, codepoint: u21, alpha: u8) bool {
+    return inverse != (alpha == 255 and isCovering(codepoint));
+}
+
+test "foreground alpha: covering glyphs preserve their actual background" {
+    const testing = std.testing;
+    for ([_]bool{ false, true }) |inverse| {
+        for ([_]u21{ 'a', 0x2588 }) |codepoint| {
+            for (0..256) |alpha| {
+                const covering = codepoint == 0x2588 and alpha == 255;
+                try testing.expectEqual(
+                    inverse != covering,
+                    backgroundUsesForeground(inverse, codepoint, @intCast(alpha)),
+                );
+            }
+        }
+    }
+}
+
 /// Cell buffer contents cached independently by each swap-chain frame.
 const CellBufferCache = struct {
     generation: ?u64 = null,
@@ -2837,6 +2856,7 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
                     managed_style.*
                 else
                     .{};
+                const alpha = style.foregroundAlpha(self.config.faint_opacity);
 
                 // True if this cell is selected
                 const selected: enum {
@@ -2914,18 +2934,16 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
                     },
 
                     // Not selected
-                    .false => if (style.flags.inverse != isCovering(cell.codepoint()))
-                        // Two cases cause us to invert (use the fg color as the bg)
-                        // - The "inverse" style flag.
-                        // - A "covering" glyph; we use fg for bg in that
-                        //   case to help make sure that padding extension
-                        //   works correctly.
-                        //
-                        // If one of these is true (but not the other)
-                        // then we use the fg style color for the bg.
+                    .false => if (backgroundUsesForeground(
+                        style.flags.inverse,
+                        cell.codepoint(),
+                        alpha,
+                    ))
+                        // Inverse text swaps the colors. Opaque covering glyphs also
+                        // use their foreground for padding extension, but translucent
+                        // glyphs must blend over their actual background.
                         fg_style
                     else
-                        // Otherwise they cancel out.
                         bg_style,
                 };
 
@@ -2963,9 +2981,6 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
                             fg_style,
                     };
                 };
-
-                // Foreground alpha for this cell.
-                const alpha: u8 = if (style.flags.faint) self.config.faint_opacity else 255;
 
                 // Set the cell's background color.
                 {

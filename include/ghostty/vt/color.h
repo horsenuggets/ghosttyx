@@ -26,6 +26,20 @@ typedef struct {
 } GhosttyColorRgb;
 
 /**
+ * RGB color with an explicit alpha channel.
+ *
+ * Alpha ranges from 0 (transparent) to 255 (opaque).
+ *
+ * @ingroup sgr
+ */
+typedef struct {
+  uint8_t r; /**< Red component (0-255) */
+  uint8_t g; /**< Green component (0-255) */
+  uint8_t b; /**< Blue component (0-255) */
+  uint8_t a; /**< Alpha component (0-255) */
+} GhosttyColorRgba;
+
+/**
  * Palette color index (0-255).
  *
  * @ingroup sgr

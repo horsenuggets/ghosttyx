@@ -25,6 +25,16 @@ pub fn table(
             color("fg", st.fg_color, palette);
         }
 
+        if (st.fg_alpha != 255) {
+            cimgui.c.ImGui_TableNextRow();
+            _ = cimgui.c.ImGui_TableSetColumnIndex(0);
+            cimgui.c.ImGui_Text("Foreground alpha");
+            cimgui.c.ImGui_SameLine();
+            widgets.helpMarker("The foreground opacity from 0 (transparent) to 255 (opaque).");
+            _ = cimgui.c.ImGui_TableSetColumnIndex(1);
+            cimgui.c.ImGui_Text("%u / 255", @as(c_uint, st.fg_alpha));
+        }
+
         {
             cimgui.c.ImGui_TableNextRow();
             _ = cimgui.c.ImGui_TableSetColumnIndex(0);

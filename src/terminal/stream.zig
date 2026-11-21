@@ -3422,6 +3422,41 @@ test "stream: SGR with 17+ parameters for underline color" {
     try testing.expect(s.handler.called);
 }
 
+test "stream foreground alpha mixed SGR and fragmented input" {
+    const H = struct {
+        attrs: [3]sgr.Attribute = undefined,
+        count: usize = 0,
+
+        pub fn deinit(_: *@This()) void {}
+
+        pub fn vt(self: *@This(), comptime action: anytype, value: anytype) void {
+            switch (action) {
+                .set_attribute => {
+                    if (self.count < self.attrs.len) self.attrs[self.count] = value;
+                    self.count += 1;
+                },
+                else => {},
+            }
+        }
+    };
+    const sequence = "\x1b[1;38:6::255:100:50:128;4m";
+    for (0..sequence.len + 1) |split| {
+        var stream: Stream(H) = .init(.{});
+        defer stream.deinit();
+        stream.nextSlice(sequence[0..split]);
+        stream.nextSlice(sequence[split..]);
+        try testing.expectEqual(@as(usize, 3), stream.handler.count);
+        try testing.expect(stream.handler.attrs[0] == .bold);
+        try testing.expect(stream.handler.attrs[1] == .direct_color_fg_rgba);
+        const rgba = stream.handler.attrs[1].direct_color_fg_rgba;
+        try testing.expectEqual(@as(u8, 255), rgba.r);
+        try testing.expectEqual(@as(u8, 100), rgba.g);
+        try testing.expectEqual(@as(u8, 50), rgba.b);
+        try testing.expectEqual(@as(u8, 128), rgba.a);
+        try testing.expectEqual(sgr.Attribute.Underline.single, stream.handler.attrs[2].underline);
+    }
+}
+
 test "stream: tab clear with overflowing param" {
     // Regression test for a fuzz crash: CSI with a parameter value that
     // saturates to 65535 (u16 max) causes @enumFromInt to panic when

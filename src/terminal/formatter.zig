@@ -4272,6 +4272,63 @@ test "TerminalFormatter vt with palette" {
     try testing.expectEqual(t.colors.palette.current[255], t2.colors.palette.current[255]);
 }
 
+test "TerminalFormatter foreground alpha VT roundtrip" {
+    const testing = std.testing;
+    const alloc = testing.allocator;
+    var builder: std.Io.Writer.Allocating = .init(alloc);
+    defer builder.deinit();
+    var t = try Terminal.init(alloc, .{ .cols = 8, .rows = 2 });
+    defer t.deinit(alloc);
+    var stream = t.vtStream();
+    defer stream.deinit();
+    stream.nextSlice("\x1b[38:6::255:100:50:0mA\x1b[38:6::255:100:50:128mB\x1b[38:6::255:100:50:255mC");
+
+    const formatter: TerminalFormatter = .init(&t, .vt);
+    try formatter.format(&builder.writer);
+    const output = builder.writer.buffered();
+    try testing.expect(std.mem.indexOf(u8, output, "\x1b[38:6::255:100:50:0m") != null);
+    try testing.expect(std.mem.indexOf(u8, output, "\x1b[38:6::255:100:50:128m") != null);
+
+    var restored = try Terminal.init(alloc, .{ .cols = 8, .rows = 2 });
+    defer restored.deinit(alloc);
+    var restored_stream = restored.vtStream();
+    defer restored_stream.deinit();
+    restored_stream.nextSlice(output);
+    for ([_]u8{ 0, 128, 255 }, 0..) |alpha, x| {
+        const original_pin = t.screens.active.pages.pin(.{ .active = .{ .x = @intCast(x), .y = 0 } }).?;
+        const restored_pin = restored.screens.active.pages.pin(.{ .active = .{ .x = @intCast(x), .y = 0 } }).?;
+        const original_cell = original_pin.rowAndCell().cell;
+        const restored_cell = restored_pin.rowAndCell().cell;
+        try testing.expectEqual(original_cell.codepoint(), restored_cell.codepoint());
+        const original_style = original_pin.style(original_cell);
+        const restored_style = restored_pin.style(restored_cell);
+        try testing.expectEqual(alpha, restored_style.fg_alpha);
+        try testing.expect(original_style.eql(restored_style));
+    }
+}
+
+test "TerminalFormatter foreground alpha HTML leaves background opaque" {
+    const testing = std.testing;
+    const alloc = testing.allocator;
+    var builder: std.Io.Writer.Allocating = .init(alloc);
+    defer builder.deinit();
+    var t = try Terminal.init(alloc, .{ .cols = 8, .rows = 2 });
+    defer t.deinit(alloc);
+    var stream = t.vtStream();
+    defer stream.deinit();
+    stream.nextSlice("\x1b[4;48:2::10:20:30;38:6::255:100:50:128mA\x1b[2mB");
+
+    const formatter: TerminalFormatter = .init(&t, .html);
+    try formatter.format(&builder.writer);
+    const output = builder.writer.buffered();
+    try testing.expect(std.mem.indexOf(u8, output, "color: rgba(255, 100, 50, 0.501961);") != null);
+    try testing.expect(std.mem.indexOf(u8, output, "color: rgba(255, 100, 50, 0.250980);") != null);
+    try testing.expect(std.mem.indexOf(u8, output, "background-color: rgb(10, 20, 30);") != null);
+    try testing.expect(std.mem.indexOf(u8, output, "opacity:") == null);
+    // Decorations without an explicit color inherit the already translucent foreground.
+    try testing.expect(std.mem.indexOf(u8, output, "text-decoration-color:") == null);
+}
+
 test "TerminalFormatter with selection" {
     const testing = std.testing;
     const alloc = testing.allocator;

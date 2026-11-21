@@ -137,6 +137,61 @@ pub fn wasm_free_attribute(attr: *sgr.Attribute.C) callconv(lib.calling_conv) vo
     alloc.destroy(attr);
 }
 
+test "foreground RGBA C parser" {
+    var p: Parser = undefined;
+    try testing.expectEqual(Result.success, new(&lib.alloc.test_allocator, &p));
+    defer free(p);
+
+    const params = [_]u16{ 38, 6, 0, 255, 100, 50, 128, 3 };
+    try testing.expectEqual(Result.success, setParams(
+        p,
+        &params,
+        "::::::;;",
+        params.len,
+    ));
+    var attr: sgr.Attribute.C = undefined;
+    try testing.expect(next(p, &attr));
+    try testing.expectEqual(.direct_color_fg_rgba, attribute_tag(attr));
+    const rgba = attribute_value(&attr).direct_color_fg_rgba;
+    try testing.expectEqual(@as(u8, 255), rgba.r);
+    try testing.expectEqual(@as(u8, 100), rgba.g);
+    try testing.expectEqual(@as(u8, 50), rgba.b);
+    try testing.expectEqual(@as(u8, 128), rgba.a);
+    try testing.expect(next(p, &attr));
+    try testing.expectEqual(.italic, attr.tag);
+    try testing.expect(!next(p, &attr));
+
+    reset(p);
+    try testing.expect(next(p, &attr));
+    try testing.expectEqual(.direct_color_fg_rgba, attr.tag);
+}
+
+test "foreground RGBA preserves C SGR ABI" {
+    const LegacyAttribute = extern struct {
+        tag: c_int,
+        value: extern union {
+            _padding: [8]u64,
+        },
+    };
+    try testing.expectEqual(@sizeOf([8]u64), @sizeOf(sgr.Attribute.CValue));
+    try testing.expectEqual(@sizeOf(LegacyAttribute), @sizeOf(sgr.Attribute.C));
+    try testing.expectEqual(
+        @offsetOf(LegacyAttribute, "value"),
+        @offsetOf(sgr.Attribute.C, "value"),
+    );
+    const existing = .{
+        "unset",           "unknown",              "bold",                "reset_bold",          "italic",                "reset_italic",
+        "faint",           "underline",            "underline_color",     "256_underline_color", "reset_underline_color", "overline",
+        "reset_overline",  "blink",                "reset_blink",         "inverse",             "reset_inverse",         "invisible",
+        "reset_invisible", "strikethrough",        "reset_strikethrough", "direct_color_fg",     "direct_color_bg",       "8_bg",
+        "8_fg",            "reset_fg",             "reset_bg",            "8_bright_bg",         "8_bright_fg",           "256_bg",
+        "256_fg",          "direct_color_fg_rgba",
+    };
+    inline for (existing, 0..) |name, value| {
+        try testing.expectEqual(value, @intFromEnum(@field(sgr.Attribute.Tag, name)));
+    }
+}
+
 test "alloc" {
     var p: Parser = undefined;
     try testing.expectEqual(Result.success, new(
