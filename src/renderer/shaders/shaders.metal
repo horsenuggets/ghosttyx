@@ -107,17 +107,19 @@ float contrast_ratio(float3 color1, float3 color2) {
 // return a color that satisfies the contrast ratio. Currently, the color
 // is always white or black, whichever has the highest contrast ratio.
 //
-// Takes colors in linear RGB space. If your colors are gamma
-// encoded, linearize them before using them with this function.
+// Takes premultiplied colors in linear RGB space. Contrast correction
+// changes the foreground RGB without overriding its requested opacity.
 float4 contrasted_color(float min, float4 fg, float4 bg) {
-  float ratio = contrast_ratio(fg.rgb, bg.rgb);
+  if (fg.a == 0.0f) return float4(0.0f);
+
+  float ratio = contrast_ratio(fg.rgb / fg.a, bg.rgb);
   if (ratio < min) {
     float white_ratio = contrast_ratio(float3(1.0f), bg.rgb);
     float black_ratio = contrast_ratio(float3(0.0f), bg.rgb);
     if (white_ratio > black_ratio) {
-      return float4(1.0f);
+      return float4(fg.a);
     } else {
-      return float4(0.0f, 0.0f, 0.0f, 1.0f);
+      return float4(0.0f, 0.0f, 0.0f, fg.a);
     }
   }
 
@@ -747,10 +749,11 @@ fragment float4 cell_text_fragment(
       // For now, we assume that color glyphs
       // are already premultiplied linear colors.
       float4 color = textureColor.sample(textureSampler, in.tex_coord);
+      if (color.a == 0.0f || in.color.a == 0.0f) return float4(0.0f);
 
-      // If we're doing linear blending, we can return this right away.
+      // If we're doing linear blending, only glyph opacity remains.
       if (uniforms.use_linear_blending) {
-        return color;
+        return color * in.color.a;
       }
 
       // Otherwise we need to unlinearize the color. Since the alpha is
@@ -759,7 +762,7 @@ fragment float4 cell_text_fragment(
       color = unlinearize(color);
       color.rgb *= color.a;
 
-      return color;
+      return color * in.color.a;
     }
   }
 }

@@ -2642,6 +2642,7 @@ pub fn decaln(self: *Terminal) !void {
     self.screens.active.cursor.style = .{
         .bg_color = self.screens.active.cursor.style.bg_color,
         .fg_color = self.screens.active.cursor.style.fg_color,
+        .fg_alpha = self.screens.active.cursor.style.fg_alpha,
     };
     errdefer self.screens.active.cursor.style = old_style;
     try self.screens.active.manualStyleUpdate();
@@ -2821,7 +2822,12 @@ pub fn printAttributes(self: *Terminal, buf: []u8) ![]const u8 {
             try writer.print(";9{}", .{idx - 8})
         else
             try writer.print(";3{}", .{idx}),
-        .rgb => |rgb| try writer.print(";38:2::{[r]}:{[g]}:{[b]}", rgb),
+        .rgb => |rgb| if (pen.fg_alpha == 255)
+            try writer.print(";38:2::{[r]}:{[g]}:{[b]}", rgb)
+        else
+            try writer.print(";38:6::{d}:{d}:{d}:{d}", .{
+                rgb.r, rgb.g, rgb.b, pen.fg_alpha,
+            }),
     }
 
     switch (pen.bg_color) {
@@ -11593,6 +11599,122 @@ test "Terminal: printAttributes" {
     {
         const buf = try t.printAttributes(&storage);
         try testing.expectEqualStrings("0", buf);
+    }
+}
+
+test "Terminal foreground alpha resets and stored cells" {
+    const cases = [_]struct { sequence: []const u8, alpha: u8 }{
+        .{ .sequence = "\x1b[0m", .alpha = 255 },
+        .{ .sequence = "\x1b[39m", .alpha = 255 },
+        .{ .sequence = "\x1b[31m", .alpha = 255 },
+        .{ .sequence = "\x1b[91m", .alpha = 255 },
+        .{ .sequence = "\x1b[38;5;123m", .alpha = 255 },
+        .{ .sequence = "\x1b[38;2;1;2;3m", .alpha = 255 },
+        .{ .sequence = "\x1b[38:2::1:2:3m", .alpha = 255 },
+        .{ .sequence = "\x1b[41m", .alpha = 128 },
+        .{ .sequence = "\x1b[48;2;1;2;3m", .alpha = 128 },
+        .{ .sequence = "\x1b[49m", .alpha = 128 },
+        .{ .sequence = "\x1b[1;2;3;4;7;9m", .alpha = 128 },
+        .{ .sequence = "\x1b[22;23;24;27;29m", .alpha = 128 },
+        .{ .sequence = "\x1b[58:2::1:2:3;59m", .alpha = 128 },
+    };
+    for (cases) |case| {
+        const alloc = testing.allocator;
+        var t = try init(alloc, .{ .rows = 2, .cols = 4 });
+        defer t.deinit(alloc);
+        var stream = t.vtStream();
+        defer stream.deinit();
+        stream.nextSlice("\x1b[38:6::255:100:50:128mA");
+        stream.nextSlice(case.sequence);
+        stream.nextSlice("B");
+        try testing.expectEqual(case.alpha, t.screens.active.cursor.style.fg_alpha);
+        const first = t.screens.active.pages.pin(.{ .active = .{ .x = 0, .y = 0 } }).?;
+        const second = t.screens.active.pages.pin(.{ .active = .{ .x = 1, .y = 0 } }).?;
+        try testing.expectEqual(@as(u8, 128), first.style(first.rowAndCell().cell).fg_alpha);
+        try testing.expectEqual(case.alpha, second.style(second.rowAndCell().cell).fg_alpha);
+    }
+}
+
+test "Terminal foreground alpha saved cursor and alternate screen" {
+    const alloc = testing.allocator;
+    var t = try init(alloc, .{ .rows = 2, .cols = 4 });
+    defer t.deinit(alloc);
+    var stream = t.vtStream();
+    defer stream.deinit();
+
+    stream.nextSlice("\x1b[38:6::255:100:50:128mA\x1b7\x1b[0m\x1b8");
+    try testing.expectEqual(@as(u8, 128), t.screens.active.cursor.style.fg_alpha);
+    stream.nextSlice("\x1b[?1049h\x1b[38:6::1:2:3:64mB");
+    try testing.expectEqual(@as(u8, 64), t.screens.active.cursor.style.fg_alpha);
+    stream.nextSlice("\x1b[?1049l");
+    try testing.expectEqual(@as(u8, 128), t.screens.active.cursor.style.fg_alpha);
+    const first = t.screens.active.pages.pin(.{ .active = .{ .x = 0, .y = 0 } }).?;
+    try testing.expectEqual(@as(u8, 128), first.style(first.rowAndCell().cell).fg_alpha);
+}
+
+test "Terminal foreground alpha scrollback and reflow" {
+    const alloc = testing.allocator;
+    var t = try init(alloc, .{ .rows = 2, .cols = 4 });
+    defer t.deinit(alloc);
+    var stream = t.vtStream();
+    defer stream.deinit();
+
+    stream.nextSlice("\x1b[38:6::255:100:50:128mABCDEFGH\r\nI\r\nJ");
+    {
+        const first = t.screens.active.pages.pin(.{ .screen = .{ .x = 0, .y = 0 } }).?;
+        try testing.expectEqual(@as(u32, 'A'), first.rowAndCell().cell.codepoint());
+        try testing.expectEqual(@as(u8, 128), first.style(first.rowAndCell().cell).fg_alpha);
+    }
+    try t.resize(alloc, 8, 2);
+    for ("ABCDEFGH", 0..) |cp, x| {
+        const pin = t.screens.active.pages.pin(.{ .screen = .{ .x = @intCast(x), .y = 0 } }).?;
+        try testing.expectEqual(@as(u32, cp), pin.rowAndCell().cell.codepoint());
+        try testing.expectEqual(@as(u8, 128), pin.style(pin.rowAndCell().cell).fg_alpha);
+    }
+    try testing.expectEqual(@as(u8, 128), t.screens.active.cursor.style.fg_alpha);
+}
+
+test "Terminal foreground alpha DECALN preserves color opacity" {
+    const alloc = testing.allocator;
+    var t = try init(alloc, .{ .rows = 2, .cols = 4 });
+    defer t.deinit(alloc);
+    var stream = t.vtStream();
+    defer stream.deinit();
+    stream.nextSlice("\x1b[1;38:6::255:100:50:128m\x1b#8");
+    try testing.expectEqual(@as(u8, 128), t.screens.active.cursor.style.fg_alpha);
+    try testing.expect(!t.screens.active.cursor.style.flags.bold);
+    const first = t.screens.active.pages.pin(.{ .active = .{ .x = 0, .y = 0 } }).?;
+    try testing.expectEqual(@as(u32, 'E'), first.rowAndCell().cell.codepoint());
+    try testing.expectEqual(@as(u8, 128), first.style(first.rowAndCell().cell).fg_alpha);
+}
+
+test "Terminal foreground alpha SGR status roundtrip" {
+    const alloc = testing.allocator;
+    var t = try init(alloc, .{ .rows = 2, .cols = 4 });
+    defer t.deinit(alloc);
+    var stream = t.vtStream();
+    defer stream.deinit();
+
+    for ([_]u8{ 0, 128, 255 }) |alpha| {
+        var sequence_buf: [96]u8 = undefined;
+        const sequence = try std.fmt.bufPrint(&sequence_buf, "\x1b[0;1;38:6::255:100:50:{d};48:2::10:20:30m", .{alpha});
+        stream.nextSlice(sequence);
+        var storage: [128]u8 = undefined;
+        const attrs = try t.printAttributes(&storage);
+        var expected_buf: [128]u8 = undefined;
+        const expected = if (alpha == 255)
+            "0;1;38:2::255:100:50;48:2::10:20:30"
+        else
+            try std.fmt.bufPrint(&expected_buf, "0;1;38:6::255:100:50:{d};48:2::10:20:30", .{alpha});
+        try testing.expectEqualStrings(expected, attrs);
+
+        var restored = try init(alloc, .{ .rows = 2, .cols = 4 });
+        defer restored.deinit(alloc);
+        var restored_stream = restored.vtStream();
+        defer restored_stream.deinit();
+        const response = try std.fmt.bufPrint(&sequence_buf, "\x1b[{s}m", .{attrs});
+        restored_stream.nextSlice(response);
+        try testing.expect(t.screens.active.cursor.style.eql(restored.screens.active.cursor.style));
     }
 }
 

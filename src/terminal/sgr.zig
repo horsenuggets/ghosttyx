@@ -77,6 +77,9 @@ pub const Attribute = union(Tag) {
     /// Set foreground color as 256-color palette.
     @"256_fg": u8,
 
+    /// Set foreground color and opacity using the WezTerm RGBA extension.
+    direct_color_fg_rgba: color.RGBA,
+
     pub const Tag = lib.Enum(
         lib.target,
         &.{
@@ -111,6 +114,7 @@ pub const Attribute = union(Tag) {
             "8_bright_fg",
             "256_bg",
             "256_fg",
+            "direct_color_fg_rgba",
         },
     );
 
@@ -342,6 +346,10 @@ pub const Parser = struct {
                         };
                     },
 
+                    6 => if (colon) {
+                        if (self.parseForegroundRgba(slice)) |v| return v;
+                    },
+
                     else => {},
                 }
             },
@@ -493,6 +501,31 @@ pub const Parser = struct {
         }
     }
 
+    fn parseForegroundRgba(self: *Parser, slice: []const u16) ?Attribute {
+        const count = self.countColon();
+        const last = self.idx + count;
+        defer self.consumeUnknownColon();
+
+        // The optional colorspace slot is ignored, as in the RGB colon form.
+        // A trailing colon can be present without a final parameter value.
+        const offset: usize = switch (count) {
+            4 => 2,
+            5 => 3,
+            else => return null,
+        };
+        if (self.params_sep.isSet(last)) return null;
+        for (slice[offset .. offset + 4]) |channel| {
+            if (channel > 255) return null;
+        }
+
+        return .{ .direct_color_fg_rgba = .{
+            .r = @intCast(slice[offset]),
+            .g = @intCast(slice[offset + 1]),
+            .b = @intCast(slice[offset + 2]),
+            .a = @intCast(slice[offset + 3]),
+        } };
+    }
+
     /// Returns true if the present position has a colon separator.
     /// This always returns false for the last value since it has no
     /// separator.
@@ -536,6 +569,81 @@ fn testParseColon(params: []const u16) Attribute {
 
 test "sgr: Attribute C compat" {
     _ = Attribute.C;
+}
+
+test "sgr: foreground RGBA colon forms" {
+    const cases = [_][]const u16{
+        &.{ 38, 6, 255, 100, 50, 128 },
+        &.{ 38, 6, 0, 255, 100, 50, 128 },
+        &.{ 38, 6, 42, 255, 100, 50, 128 },
+    };
+    for (cases) |params| {
+        var p: Parser = .{ .params = params };
+        for (0..params.len - 1) |i| p.params_sep.set(i);
+        const attr = p.next().?;
+        try testing.expect(attr == .direct_color_fg_rgba);
+        try testing.expectEqual(
+            color.RGBA{ .r = 255, .g = 100, .b = 50, .a = 128 },
+            attr.direct_color_fg_rgba,
+        );
+        try testing.expectEqual(@as(?Attribute, null), p.next());
+    }
+}
+
+test "sgr: foreground RGBA alpha endpoints" {
+    for ([_]u16{ 0, 1, 128, 254, 255 }) |alpha| {
+        const attr = testParseColon(&.{ 38, 6, 0, 0, 255, 128, alpha });
+        try testing.expect(attr == .direct_color_fg_rgba);
+        try testing.expectEqual(@as(u8, @intCast(alpha)), attr.direct_color_fg_rgba.a);
+    }
+}
+
+test "sgr: foreground RGBA mixed attributes" {
+    var p: Parser = .{ .params = &.{ 1, 38, 6, 0, 255, 100, 50, 128, 3 } };
+    for (1..7) |i| p.params_sep.set(i);
+    try testing.expect(p.next().? == .bold);
+    try testing.expect(p.next().? == .direct_color_fg_rgba);
+    try testing.expect(p.next().? == .italic);
+    try testing.expectEqual(@as(?Attribute, null), p.next());
+}
+
+test "sgr: malformed foreground RGBA consumes its colon group" {
+    const cases = [_][]const u16{
+        &.{ 38, 6, 3 },
+        &.{ 38, 6, 0, 3 },
+        &.{ 38, 6, 0, 1, 3 },
+        &.{ 38, 6, 0, 1, 2, 3 },
+        &.{ 38, 6, 0, 256, 2, 3, 4, 3 },
+        &.{ 38, 6, 0, 1, 256, 3, 4, 3 },
+        &.{ 38, 6, 0, 1, 2, 256, 4, 3 },
+        &.{ 38, 6, 0, 1, 2, 3, 256, 3 },
+        &.{ 38, 6, 0, 1, 2, 3, 4, 5, 3 },
+    };
+    for (cases) |params| {
+        var p: Parser = .{ .params = params };
+        for (0..params.len - 2) |i| p.params_sep.set(i);
+        try testing.expect(p.next().? == .unknown);
+        try testing.expect(p.next().? == .italic);
+        try testing.expectEqual(@as(?Attribute, null), p.next());
+    }
+}
+
+test "sgr: foreground RGBA rejects trailing colon" {
+    var p: Parser = .{ .params = &.{ 38, 6, 0, 255, 100, 50, 128 } };
+    for (0..p.params.len) |i| p.params_sep.set(i);
+    try testing.expect(p.next().? == .unknown);
+    try testing.expectEqual(@as(?Attribute, null), p.next());
+}
+
+test "sgr: foreground RGBA requires colon separators" {
+    try testing.expect(testParse(&.{ 38, 6, 0, 255, 100, 50, 128 }) == .unknown);
+    try testing.expect(testParseColon(&.{ 48, 6, 0, 255, 100, 50, 128 }) == .unknown);
+    try testing.expect(testParseColon(&.{ 58, 6, 0, 255, 100, 50, 128 }) == .unknown);
+
+    var p: Parser = .{ .params = &.{ 38, 6, 0, 255, 100, 50, 128, 3 } };
+    p.params_sep.set(0);
+    try testing.expect(p.next().? == .unknown);
+    try testing.expect(p.next().? == .unset);
 }
 
 test "sgr: Parser" {

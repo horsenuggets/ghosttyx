@@ -1941,7 +1941,17 @@ pub fn setAttribute(
             self.cursor.style.flags.strikethrough = false;
         },
 
+        .direct_color_fg_rgba => |rgba| {
+            self.cursor.style.fg_color = .{ .rgb = .{
+                .r = rgba.r,
+                .g = rgba.g,
+                .b = rgba.b,
+            } };
+            self.cursor.style.fg_alpha = rgba.a;
+        },
+
         .direct_color_fg => |rgb| {
+            self.cursor.style.fg_alpha = 255;
             self.cursor.style.fg_color = .{
                 .rgb = .{
                     .r = rgb.r,
@@ -1962,6 +1972,7 @@ pub fn setAttribute(
         },
 
         .@"8_fg" => |n| {
+            self.cursor.style.fg_alpha = 255;
             self.cursor.style.fg_color = .{ .palette = @intFromEnum(n) };
         },
 
@@ -1969,11 +1980,15 @@ pub fn setAttribute(
             self.cursor.style.bg_color = .{ .palette = @intFromEnum(n) };
         },
 
-        .reset_fg => self.cursor.style.fg_color = .none,
+        .reset_fg => {
+            self.cursor.style.fg_color = .none;
+            self.cursor.style.fg_alpha = 255;
+        },
 
         .reset_bg => self.cursor.style.bg_color = .none,
 
         .@"8_bright_fg" => |n| {
+            self.cursor.style.fg_alpha = 255;
             self.cursor.style.fg_color = .{ .palette = @intFromEnum(n) };
         },
 
@@ -1982,6 +1997,7 @@ pub fn setAttribute(
         },
 
         .@"256_fg" => |idx| {
+            self.cursor.style.fg_alpha = 255;
             self.cursor.style.fg_color = .{ .palette = idx };
         },
 
@@ -3751,6 +3767,59 @@ test "Screen style basics" {
     try testing.expect(s.cursor.style_id != 0);
     try testing.expectEqual(@as(usize, 1), page.styles.count());
     try testing.expect(s.cursor.style.flags.italic);
+}
+
+test "Screen foreground alpha resets with foreground attributes" {
+    const testing = std.testing;
+    var s = try Screen.init(testing.allocator, .{ .cols = 10, .rows = 2 });
+    defer s.deinit();
+    const rgba: sgr.Attribute = .{ .direct_color_fg_rgba = .{ .r = 10, .g = 20, .b = 30, .a = 128 } };
+    const attributes = [_]sgr.Attribute{
+        .unset,
+        .reset_fg,
+        .{ .direct_color_fg = .{ .r = 40, .g = 50, .b = 60 } },
+        .{ .@"8_fg" = .red },
+        .{ .@"8_bright_fg" = .bright_red },
+        .{ .@"256_fg" = 100 },
+    };
+    for (attributes) |attr| {
+        try s.setAttribute(rgba);
+        try testing.expectEqual(@as(u8, 128), s.cursor.style.fg_alpha);
+        try s.setAttribute(attr);
+        try testing.expectEqual(@as(u8, 255), s.cursor.style.fg_alpha);
+    }
+}
+
+test "Screen foreground alpha survives unrelated attributes" {
+    const testing = std.testing;
+    var s = try Screen.init(testing.allocator, .{ .cols = 10, .rows = 2 });
+    defer s.deinit();
+    const rgba: sgr.Attribute = .{ .direct_color_fg_rgba = .{ .r = 10, .g = 20, .b = 30, .a = 128 } };
+    const attributes = [_]sgr.Attribute{
+        .bold,
+        .faint,
+        .reset_bold,
+        .italic,
+        .reset_italic,
+        .inverse,
+        .reset_inverse,
+        .invisible,
+        .reset_invisible,
+        .{ .underline = .single },
+        .{ .underline_color = .{ .r = 1, .g = 2, .b = 3 } },
+        .reset_underline_color,
+        .reset_bg,
+        .{ .direct_color_bg = .{ .r = 40, .g = 50, .b = 60 } },
+        .{ .@"8_bg" = .red },
+        .{ .@"8_bright_bg" = .bright_red },
+        .{ .@"256_bg" = 100 },
+    };
+    for (attributes) |attr| {
+        try s.setAttribute(rgba);
+        try s.setAttribute(attr);
+        try testing.expectEqual(@as(u8, 128), s.cursor.style.fg_alpha);
+        try testing.expectEqual(@as(u8, 10), s.cursor.style.fg_color.rgb.r);
+    }
 }
 
 test "Screen style reset to default" {

@@ -20,7 +20,8 @@
  * and returns individual text attributes like bold, italic, colors, etc.
  * It supports both semicolon (`;`) and colon (`:`) separators, possibly mixed,
  * and handles various color formats including 8-color, 16-color, 256-color,
- * X11 named colors, and RGB in multiple formats.
+ * X11 named colors, RGB in multiple formats, and the WezTerm foreground RGBA
+ * extension (`ESC[38:6::R:G:B:Am`). RGBA channels range from 0 to 255.
  *
  * ## Basic Usage
  *
@@ -87,6 +88,7 @@ typedef enum GHOSTTY_ENUM_TYPED {
   GHOSTTY_SGR_ATTR_BRIGHT_FG_8 = 28,
   GHOSTTY_SGR_ATTR_BG_256 = 29,
   GHOSTTY_SGR_ATTR_FG_256 = 30,
+  GHOSTTY_SGR_ATTR_DIRECT_COLOR_FG_RGBA = 31,
   GHOSTTY_SGR_ATTR_MAX_VALUE = GHOSTTY_ENUM_MAX_VALUE,
 } GhosttySgrAttributeTag;
 
@@ -142,6 +144,7 @@ typedef union {
   GhosttyColorPaletteIndex bright_fg_8;
   GhosttyColorPaletteIndex bg_256;
   GhosttyColorPaletteIndex fg_256;
+  GhosttyColorRgba direct_color_fg_rgba;
   uint64_t _padding[8];
 } GhosttySgrAttributeValue;
 
