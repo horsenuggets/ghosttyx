@@ -250,6 +250,7 @@
 				Helpers/KeyboardLayout.swift,
 				Helpers/LastWindowPosition.swift,
 				Helpers/MetalView.swift,
+				Helpers/NativeTabStyle.swift,
 				Helpers/NonDraggableHostingView.swift,
 				Helpers/ObjCExceptionCatcher.m,
 				Helpers/PermissionRequest.swift,
