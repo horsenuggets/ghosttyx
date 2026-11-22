@@ -103,7 +103,7 @@ struct SplitView<L: View, R: View>: View {
     }
 
     /// Calculates the bounding rect for the left view.
-    private func leftRect(for size: CGSize) -> CGRect {
+    func leftRect(for size: CGSize) -> CGRect {
         // Initially the rect is the full size
         var result = CGRect(x: 0, y: 0, width: size.width, height: size.height)
         switch direction {
@@ -121,8 +121,9 @@ struct SplitView<L: View, R: View>: View {
         return result
     }
 
-    /// Calculates the bounding rect for the right view.
-    private func rightRect(for size: CGSize, leftRect: CGRect) -> CGRect {
+    /// Calculates the bounding rect for the right view. The panes are separated by a gap
+    /// as wide as the visible splitter, so a translucent divider never overlaps either pane.
+    func rightRect(for size: CGSize, leftRect: CGRect) -> CGRect {
         // Initially the rect is the full size
         var result = CGRect(x: 0, y: 0, width: size.width, height: size.height)
         switch direction {
@@ -130,26 +131,27 @@ struct SplitView<L: View, R: View>: View {
             // For horizontal layouts we offset the starting X by the left rect
             // and make the width fit the remaining space.
             result.origin.x += leftRect.size.width
-            result.origin.x += splitterVisibleSize / 2
+            result.origin.x += splitterVisibleSize
             result.size.width -= result.origin.x
 
         case .vertical:
             result.origin.y += leftRect.size.height
-            result.origin.y += splitterVisibleSize / 2
+            result.origin.y += splitterVisibleSize
             result.size.height -= result.origin.y
         }
 
         return result
     }
 
-    /// Calculates the point at which the splitter should be rendered.
-    private func splitterPoint(for size: CGSize, leftRect: CGRect) -> CGPoint {
+    /// Calculates the point at which the splitter should be rendered, centered in the gap
+    /// between the panes.
+    func splitterPoint(for size: CGSize, leftRect: CGRect) -> CGPoint {
         switch direction {
         case .horizontal:
-            return CGPoint(x: leftRect.size.width, y: size.height / 2)
+            return CGPoint(x: leftRect.size.width + splitterVisibleSize / 2, y: size.height / 2)
 
         case .vertical:
-            return CGPoint(x: size.width / 2, y: leftRect.size.height)
+            return CGPoint(x: size.width / 2, y: leftRect.size.height + splitterVisibleSize / 2)
         }
     }
 

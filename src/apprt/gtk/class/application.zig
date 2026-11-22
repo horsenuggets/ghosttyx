@@ -904,6 +904,15 @@ pub const Application = extern struct {
             });
         }
 
+        if (config.@"split-divider-opacity" < 1.0) {
+            try writer.print(
+                \\.window .split paned > separator {{
+                \\  opacity: {d:.2};
+                \\}}
+                \\
+            , .{config.@"split-divider-opacity"});
+        }
+
         if (config.@"window-title-font-family") |font_family| {
             try writer.print(
                 \\.window headerbar {{

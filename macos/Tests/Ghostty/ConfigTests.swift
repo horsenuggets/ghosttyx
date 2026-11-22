@@ -65,6 +65,56 @@ struct ConfigTests {
         #expect(!config.errors.isEmpty)
     }
 
+    // MARK: - Split Divider
+
+    @Test func splitDividerIsOpaqueByDefault() throws {
+        let config = try TemporaryConfig("")
+        #expect(config.splitDividerOpacity == 1)
+        #expect(NSColor(config.splitDividerColor).alphaComponent == 1)
+    }
+
+    @Test(arguments: [
+        (true, "0", 0.0),
+        (true, "0.4", 0.4),
+        (true, "2", 1.0),
+        (false, "0", 0.0),
+        (false, "0.4", 0.4),
+        (false, "-1", 0.0),
+    ])
+    func splitDividerOpacityAppliesToEveryColorSource(
+        hasColor: Bool,
+        opacity: String,
+        expected: Double
+    ) throws {
+        let color = hasColor ? "split-divider-color = #336699\n" : ""
+        let config = try TemporaryConfig(color + "split-divider-opacity = \(opacity)")
+        #expect(config.errors.isEmpty)
+        #expect(config.splitDividerOpacity == expected)
+
+        let divider = try #require(NSColor(config.splitDividerColor).usingColorSpace(.sRGB))
+        #expect(abs(divider.alphaComponent - expected) < 0.001)
+        if hasColor {
+            #expect(abs(divider.redComponent - 0x33 / 255) < 0.001)
+            #expect(abs(divider.greenComponent - 0x66 / 255) < 0.001)
+            #expect(abs(divider.blueComponent - 0x99 / 255) < 0.001)
+        }
+    }
+
+    @Test func splitDividerOpacityResetsOnReload() throws {
+        let config = try TemporaryConfig("split-divider-opacity = 0.25")
+        #expect(config.splitDividerOpacity == 0.25)
+
+        try config.reload("split-divider-opacity =")
+        #expect(config.splitDividerOpacity == 1)
+        #expect(NSColor(config.splitDividerColor).alphaComponent == 1)
+
+        try config.reload("split-divider-opacity = 0.5")
+        #expect(config.splitDividerOpacity == 0.5)
+
+        try config.reload("")
+        #expect(config.splitDividerOpacity == 1)
+    }
+
     // MARK: - Boolean Properties
 
     @Test func initialWindowDefaultsToTrue() throws {
