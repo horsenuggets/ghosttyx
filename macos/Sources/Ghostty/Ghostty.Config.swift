@@ -368,6 +368,60 @@ extension Ghostty {
             return MacOSTitlebarStyle(rawValue: String(cString: ptr)) ?? defaultValue
         }
 
+        var macosTabBarBackground: Color? {
+            guard let config = self.config else { return nil }
+            var color: ghostty_config_color_s = .init()
+            let key = "macos-tab-bar-background"
+            guard ghostty_config_get(config, &color, key, UInt(key.lengthOfBytes(using: .utf8))) else { return nil }
+            return .init(
+                red: Double(color.r) / 255,
+                green: Double(color.g) / 255,
+                blue: Double(color.b) / 255)
+        }
+
+        var macosTabActiveBackground: Color? {
+            guard let config = self.config else { return nil }
+            var color: ghostty_config_color_s = .init()
+            let key = "macos-tab-active-background"
+            guard ghostty_config_get(config, &color, key, UInt(key.lengthOfBytes(using: .utf8))) else { return nil }
+            return .init(
+                red: Double(color.r) / 255,
+                green: Double(color.g) / 255,
+                blue: Double(color.b) / 255)
+        }
+
+        var macosTabInactiveBackground: Color? {
+            guard let config = self.config else { return nil }
+            var color: ghostty_config_color_s = .init()
+            let key = "macos-tab-inactive-background"
+            guard ghostty_config_get(config, &color, key, UInt(key.lengthOfBytes(using: .utf8))) else { return nil }
+            return .init(
+                red: Double(color.r) / 255,
+                green: Double(color.g) / 255,
+                blue: Double(color.b) / 255)
+        }
+
+        var macosTabBarOpacity: Double {
+            var value = 1.0
+            let key = "macos-tab-bar-opacity"
+            _ = ghostty_config_get(config, &value, key, UInt(key.utf8.count))
+            return value
+        }
+
+        var macosTabActiveOpacity: Double {
+            var value = 1.0
+            let key = "macos-tab-active-opacity"
+            _ = ghostty_config_get(config, &value, key, UInt(key.utf8.count))
+            return value
+        }
+
+        var macosTabInactiveOpacity: Double {
+            var value = 1.0
+            let key = "macos-tab-inactive-opacity"
+            _ = ghostty_config_get(config, &value, key, UInt(key.utf8.count))
+            return value
+        }
+
         var macosTitlebarProxyIcon: MacOSTitlebarProxyIcon {
             let defaultValue = MacOSTitlebarProxyIcon.visible
             guard let config = self.config else { return defaultValue }

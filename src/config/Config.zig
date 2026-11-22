@@ -3348,6 +3348,60 @@ keybind: Keybinds = .{},
 /// Changing this option at runtime only applies to new windows.
 @"macos-titlebar-style": MacTitlebarStyle = .transparent,
 
+/// The background color of the native macOS tab bar, including the area
+/// not occupied by tabs. This does not change the terminal background.
+///
+/// Specify a hex color (`#RRGGBB` or `RRGGBB`) or a named X11 color.
+/// By default, this is unset and the native appearance is preserved.
+/// An empty value resets this option to the native appearance.
+///
+/// This option is only supported on macOS. Changes take effect in existing
+/// windows when the configuration is reloaded.
+@"macos-tab-bar-background": ?Color = null,
+
+/// The background color of the selected tab in the native macOS tab bar.
+/// This does not change the terminal background or tab text color.
+///
+/// Specify a hex color (`#RRGGBB` or `RRGGBB`) or a named X11 color.
+/// By default, this is unset and the native appearance is preserved.
+/// An empty value resets this option to the native appearance.
+///
+/// This option is only supported on macOS. Changes take effect in existing
+/// windows when the configuration is reloaded.
+@"macos-tab-active-background": ?Color = null,
+
+/// The background color of unselected tabs in the native macOS tab bar.
+/// This does not change the terminal background or tab text color.
+///
+/// Specify a hex color (`#RRGGBB` or `RRGGBB`) or a named X11 color.
+/// By default, this is unset and the native appearance is preserved.
+/// An empty value resets this option to the native appearance.
+///
+/// This option is only supported on macOS. Changes take effect in existing
+/// windows when the configuration is reloaded.
+@"macos-tab-inactive-background": ?Color = null,
+
+/// The opacity of `macos-tab-bar-background`, from 0 (transparent) to 1
+/// (opaque). Values outside this range are clamped. This only takes effect
+/// when the corresponding background color is set. An empty value restores
+/// full opacity. Changes apply when the configuration is reloaded.
+///
+/// On macOS 26 and later, the tab strip's native background material is
+/// removed beneath the custom color. Transparency reveals the window's
+/// titlebar backdrop; use `background-opacity` to make the window itself
+/// transparent as well. Individual tabs retain native glass rendering so
+/// their titles and controls remain visible. Older macOS versions retain
+/// their native background beneath the color.
+@"macos-tab-bar-opacity": f64 = 1.0,
+
+/// The opacity of `macos-tab-active-background`. See `macos-tab-bar-opacity`
+/// for the range, transparency behavior, and runtime reload support.
+@"macos-tab-active-opacity": f64 = 1.0,
+
+/// The opacity of `macos-tab-inactive-background`. See `macos-tab-bar-opacity`
+/// for the range, transparency behavior, and runtime reload support.
+@"macos-tab-inactive-opacity": f64 = 1.0,
+
 /// Whether the proxy icon in the macOS titlebar is visible. The proxy icon
 /// is the icon that represents the folder of the current working directory.
 /// You can see this very clearly in the macOS built-in Terminal.app
@@ -4765,6 +4819,10 @@ pub fn finalize(self: *Config) !void {
 
     // Clamp our split opacity
     self.@"unfocused-split-opacity" = @min(1.0, @max(0.15, self.@"unfocused-split-opacity"));
+
+    inline for (.{ "macos-tab-bar-opacity", "macos-tab-active-opacity", "macos-tab-inactive-opacity" }) |field| {
+        @field(self, field) = @min(1.0, @max(0.0, @field(self, field)));
+    }
 
     // Clamp our contrast
     self.@"minimum-contrast" = @min(21, @max(1, self.@"minimum-contrast"));
@@ -10783,6 +10841,118 @@ test "parse e: command and args" {
     try testing.expectEqualStrings(cmd.direct[0], "echo");
     try testing.expectEqualStrings(cmd.direct[1], "foo");
     try testing.expectEqualStrings(cmd.direct[2], "bar baz");
+}
+
+test "macOS tab background colors parse and reset" {
+    const testing = std.testing;
+    const alloc = testing.allocator;
+
+    inline for (.{
+        "macos-tab-bar-background",
+        "macos-tab-active-background",
+        "macos-tab-inactive-background",
+    }) |field| {
+        var cfg = try Config.default(alloc);
+        defer cfg.deinit();
+        var original = try cfg.clone(alloc);
+        defer original.deinit();
+        const key = @field(Key, field);
+        var cval: Color.C = undefined;
+
+        try testing.expectEqual(@as(?Color, null), @field(cfg, field));
+        try testing.expect(!@import("c_get.zig").get(&cfg, key, &cval));
+
+        var hex: TestIterator = .{ .data = &.{"--" ++ field ++ "=#123456"} };
+        try cfg.loadIter(alloc, &hex);
+        const expected: Color = .{ .r = 0x12, .g = 0x34, .b = 0x56 };
+        try testing.expectEqual(expected, @field(cfg, field).?);
+        try testing.expect(@import("c_get.zig").get(&cfg, key, &cval));
+        try testing.expectEqualDeep(expected.cval(), cval);
+        var changes = original.changeIterator(&cfg);
+        try testing.expectEqual(@as(?Key, key), changes.next());
+        try testing.expectEqual(@as(?Key, null), changes.next());
+
+        var named: TestIterator = .{ .data = &.{"--" ++ field ++ "=red"} };
+        try cfg.loadIter(alloc, &named);
+        try testing.expectEqual(Color{ .r = 255, .g = 0, .b = 0 }, @field(cfg, field).?);
+
+        var reset: TestIterator = .{ .data = &.{"--" ++ field ++ "="} };
+        try cfg.loadIter(alloc, &reset);
+        var reset_changes = original.changeIterator(&cfg);
+        try testing.expectEqual(@as(?Key, null), reset_changes.next());
+        try cfg.finalize();
+        try testing.expect(cfg._diagnostics.empty());
+        try testing.expectEqual(@as(?Color, null), @field(cfg, field));
+        try testing.expect(!@import("c_get.zig").get(&cfg, key, &cval));
+    }
+}
+
+test "macOS tab opacities parse clamp and reset" {
+    const testing = std.testing;
+    const alloc = testing.allocator;
+
+    inline for (.{ "macos-tab-bar-opacity", "macos-tab-active-opacity", "macos-tab-inactive-opacity" }) |field| {
+        inline for (.{
+            .{ "0", 0.0 },
+            .{ "0.5", 0.5 },
+            .{ "1", 1.0 },
+            .{ "-1", 0.0 },
+            .{ "2", 1.0 },
+            .{ "nan", 0.0 },
+            .{ "inf", 1.0 },
+            .{ "-inf", 0.0 },
+        }) |case| {
+            var cfg = try Config.default(alloc);
+            defer cfg.deinit();
+            try testing.expectEqual(@as(f64, 1), @field(cfg, field));
+            var value: TestIterator = .{ .data = &.{"--" ++ field ++ "=" ++ case[0]} };
+            try cfg.loadIter(alloc, &value);
+            try cfg.finalize();
+            try testing.expect(cfg._diagnostics.empty());
+            try testing.expectEqual(@as(f64, case[1]), @field(cfg, field));
+            var cval: f64 = undefined;
+            try testing.expect(@import("c_get.zig").get(&cfg, @field(Key, field), &cval));
+            try testing.expectEqual(@as(f64, case[1]), cval);
+            var reset: TestIterator = .{ .data = &.{"--" ++ field ++ "="} };
+            try cfg.loadIter(alloc, &reset);
+            try testing.expectEqual(@as(f64, 1), @field(cfg, field));
+        }
+        var cfg = try Config.default(alloc);
+        defer cfg.deinit();
+        var invalid: TestIterator = .{ .data = &.{"--" ++ field ++ "=invalid"} };
+        try cfg.loadIter(alloc, &invalid);
+        try testing.expect(!cfg._diagnostics.empty());
+        try testing.expectEqual(@as(f64, 1), @field(cfg, field));
+    }
+}
+
+test "macOS tab background colors reject invalid values" {
+    const testing = std.testing;
+    const alloc = testing.allocator;
+
+    inline for (.{
+        "macos-tab-bar-background",
+        "macos-tab-active-background",
+        "macos-tab-inactive-background",
+    }) |field| {
+        inline for (.{ "not-a-color", "#GGHHII" }) |value| {
+            var cfg = try Config.default(alloc);
+            defer cfg.deinit();
+            var invalid: TestIterator = .{ .data = &.{"--" ++ field ++ "=" ++ value} };
+            try cfg.loadIter(alloc, &invalid);
+            try testing.expect(!cfg._diagnostics.empty());
+            try testing.expectEqual(@as(?Color, null), @field(cfg, field));
+
+            var hex: TestIterator = .{ .data = &.{"--" ++ field ++ "=123456"} };
+            try cfg.loadIter(alloc, &hex);
+            var invalid_again: TestIterator = .{ .data = &.{"--" ++ field ++ "=" ++ value} };
+            try cfg.loadIter(alloc, &invalid_again);
+            try testing.expectEqual(
+                Color{ .r = 0x12, .g = 0x34, .b = 0x56 },
+                @field(cfg, field).?,
+            );
+        }
+    }
 }
 
 test "clone default" {

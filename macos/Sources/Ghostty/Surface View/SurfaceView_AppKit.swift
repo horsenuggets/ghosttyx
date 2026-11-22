@@ -734,8 +734,7 @@ extension Ghostty {
                 // cached value is restored next time the terminal emits a
                 // color_change.
                 if let cached = self.backgroundColor,
-                   cached != self.derivedConfig.backgroundColor
-                {
+                   cached != self.derivedConfig.backgroundColor {
                     self.backgroundColor = nil
                 }
             }
@@ -1787,6 +1786,7 @@ extension Ghostty {
             let macosWindowShadow: Bool
             let windowTitleFontFamily: String?
             let windowAppearance: NSAppearance?
+            let tabColors: NativeTabStyle.Colors
             let scrollbar: Ghostty.Config.Scrollbar
 
             init() {
@@ -1796,6 +1796,7 @@ extension Ghostty {
                 self.macosWindowShadow = true
                 self.windowTitleFontFamily = nil
                 self.windowAppearance = nil
+                self.tabColors = .init()
                 self.scrollbar = .system
             }
 
@@ -1806,6 +1807,17 @@ extension Ghostty {
                 self.macosWindowShadow = config.macosWindowShadow
                 self.windowTitleFontFamily = config.windowTitleFontFamily
                 self.windowAppearance = .init(ghosttyConfig: config)
+                self.tabColors = .init(
+                    bar: config.macosTabBarBackground.map {
+                        NSColor($0).withAlphaComponent(config.macosTabBarOpacity)
+                    },
+                    active: config.macosTabActiveBackground.map {
+                        NSColor($0).withAlphaComponent(config.macosTabActiveOpacity)
+                    },
+                    inactive: config.macosTabInactiveBackground.map {
+                        NSColor($0).withAlphaComponent(config.macosTabInactiveOpacity)
+                    }
+                )
                 self.scrollbar = config.scrollbar
             }
         }

@@ -37,6 +37,9 @@ class TerminalWindow: NSWindow {
     /// Sets up our tab context menu
     private var tabMenuObserver: NSObjectProtocol?
 
+    private let nativeTabStyle = NativeTabStyle()
+    private(set) var tabColors = NativeTabStyle.Colors()
+
     /// Handles inline tab title editing for this host window.
     private(set) lazy var tabTitleEditor = TabTitleEditor(
         hostWindow: self,
@@ -192,6 +195,7 @@ class TerminalWindow: NSWindow {
     }
 
     override func close() {
+        nativeTabStyle.reset()
         tabTitleEditor.finishEditing(commit: true)
         NotificationCenter.default.post(name: Self.terminalWillCloseNotification, object: self)
         super.close()
@@ -227,6 +231,9 @@ class TerminalWindow: NSWindow {
 
     override func resignMain() {
         super.resignMain()
+        if let selectedWindow = tabGroup?.selectedWindow, selectedWindow !== self {
+            nativeTabStyle.reset()
+        }
         viewModel.isMainWindow = false
     }
 
@@ -429,6 +436,7 @@ class TerminalWindow: NSWindow {
     override func update() {
         super.update()
         updateNativeTitleSymbols()
+        nativeTabStyle.apply(to: self, colors: tabColors)
     }
 
     private func updateNativeTitleSymbols() {
@@ -486,11 +494,14 @@ class TerminalWindow: NSWindow {
 
     /// This is called by the controller when there is a need to reset the window appearance.
     func syncAppearance(_ surfaceConfig: Ghostty.SurfaceView.DerivedConfig) {
-        // If our window is not visible, then we do nothing. Some things such as blurring
-        // have no effect if the window is not visible. Ultimately, we'll have this called
-        // at some point when a surface becomes focused.
+        tabColors = surfaceConfig.tabColors
+
+        // Some appearance changes, such as blurring, only work on visible windows.
+        // Keep the tab color cache current even while a window is hidden.
         guard isVisible else { return }
         defer { updateColorSchemeForSurfaceTree() }
+
+        nativeTabStyle.apply(to: self, colors: tabColors)
 
         // Basic properties
         appearance = surfaceConfig.windowAppearance
