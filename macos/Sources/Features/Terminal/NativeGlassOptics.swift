@@ -60,9 +60,14 @@ struct NativeGlassFilterAccess: GlassFilterAccess {
 /// Overrides only native glass filters belonging to this view's layer tree.
 @MainActor
 final class NativeGlassOptics {
+    private struct FilterOverride {
+        let native: Any
+        let applied: Any
+    }
+
     private struct Snapshot {
         weak var layer: CALayer?
-        let nativeFilters: [Any]
+        let overrides: [FilterOverride]
         let appliedFilters: [Any]
         let inputs: [String: Double]
         let supported: Set<String>
@@ -99,9 +104,7 @@ final class NativeGlassOptics {
         optics = GlassOptics()
         observations.removeAll()
         for snapshot in snapshots.values {
-            guard let layer = snapshot.layer,
-                  sameFilters(layer.filters ?? [], snapshot.appliedFilters) else { continue }
-            layer.filters = snapshot.nativeFilters
+            restoreOwnedFilters(from: snapshot)
         }
         snapshots.removeAll()
     }
@@ -127,9 +130,7 @@ final class NativeGlassOptics {
         let identifiers = Set(layers.map(ObjectIdentifier.init))
         observations = observations.filter { identifiers.contains($0.key) }
         for (identifier, snapshot) in snapshots where !identifiers.contains(identifier) {
-            if let layer = snapshot.layer, sameFilters(layer.filters ?? [], snapshot.appliedFilters) {
-                layer.filters = snapshot.nativeFilters
-            }
+            restoreOwnedFilters(from: snapshot)
         }
         snapshots = snapshots.filter { identifiers.contains($0.key) }
         var supported = Set<String>()
@@ -152,15 +153,10 @@ final class NativeGlassOptics {
                 continue
             }
 
-            let native: [Any]
-            if let saved, isApplied {
-                native = saved.nativeFilters
-            } else {
-                native = current
-            }
+            let native = saved.map { restoringOwnedFilters(in: current, from: $0) } ?? current
             var replacements = native
             var layerSupported = Set<String>()
-            var changed = false
+            var overriddenIndices: [Int] = []
             for (index, filter) in native.enumerated() {
                 do {
                     guard let keys = try access.inputKeys(of: filter, keys: Array(inputs.keys)) else { continue }
@@ -168,24 +164,29 @@ final class NativeGlassOptics {
                     guard !available.isEmpty else { continue }
                     replacements[index] = try access.copy(filter, overriding: available)
                     layerSupported.formUnion(available.keys)
-                    changed = true
+                    overriddenIndices.append(index)
                 } catch {
                     failure = error.localizedDescription
                 }
             }
             supported.formUnion(layerSupported)
-            if changed {
+            if !overriddenIndices.isEmpty {
                 layer.filters = replacements
                 // Core Animation can retain a value-equal filter instead of our copy.
+                let applied = layer.filters ?? []
+                let overrides = overriddenIndices.compactMap { index -> FilterOverride? in
+                    guard applied.indices.contains(index) else { return nil }
+                    return FilterOverride(native: native[index], applied: applied[index])
+                }
                 snapshots[identifier] = Snapshot(
                     layer: layer,
-                    nativeFilters: native,
-                    appliedFilters: layer.filters ?? [],
+                    overrides: overrides,
+                    appliedFilters: applied,
                     inputs: inputs,
                     supported: layerSupported
                 )
             } else {
-                if isApplied { layer.filters = native }
+                if let saved { restoreOwnedFilters(from: saved) }
                 snapshots.removeValue(forKey: identifier)
             }
         }
@@ -204,6 +205,19 @@ final class NativeGlassOptics {
                 lastDiagnostic = nil
             }
         }
+    }
+
+    private func restoringOwnedFilters(in current: [Any], from snapshot: Snapshot) -> [Any] {
+        current.map { filter in
+            snapshot.overrides.first { ($0.applied as AnyObject) === (filter as AnyObject) }?.native ?? filter
+        }
+    }
+
+    private func restoreOwnedFilters(from snapshot: Snapshot) {
+        guard let layer = snapshot.layer else { return }
+        let current = layer.filters ?? []
+        let native = restoringOwnedFilters(in: current, from: snapshot)
+        if !sameFilters(current, native) { layer.filters = native }
     }
 
     private func observe(_ layer: CALayer) {
