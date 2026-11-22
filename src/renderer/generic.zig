@@ -80,6 +80,148 @@ test "foreground alpha: covering glyphs preserve their actual background" {
     }
 }
 
+/// Decides the opacity of a cell's background fill and foreground glyph.
+const CellOpacity = struct {
+    /// Whether `background-opacity-cells` is enabled.
+    cells: bool,
+    /// Whether the cell is selected or highlighted by a search.
+    highlighted: bool,
+    /// Whether the cell has the inverse (SGR 7) attribute.
+    inverse: bool,
+    /// The configured `background-opacity`, already clamped to 0 through 1.
+    opacity: f64,
+
+    /// Whether `background-opacity-cells` applies to an inverse cell. Inverse cells draw
+    /// their glyph in the background color, so the glyph fades with the fill.
+    fn fadesInverse(self: CellOpacity) bool {
+        return self.cells and self.inverse and !self.highlighted;
+    }
+
+    fn cellAlpha(self: CellOpacity) u8 {
+        return @intFromFloat(255.0 * self.opacity);
+    }
+
+    /// The alpha of the background fill. Highlights are always opaque. Inverse cells
+    /// and cells with an explicit background are opaque unless
+    /// `background-opacity-cells` is enabled. Other cells let the window background
+    /// show through.
+    fn fillAlpha(self: CellOpacity, explicit_bg: bool) u8 {
+        if (self.highlighted) return 255;
+        if (!self.inverse and !explicit_bg) return 0;
+        return if (self.cells) self.cellAlpha() else 255;
+    }
+
+    /// The alpha of the glyph and its decorations, composed with the foreground alpha.
+    fn glyphAlpha(self: CellOpacity, fg_alpha: u8) u8 {
+        if (!self.fadesInverse()) return fg_alpha;
+        const product = @as(u16, fg_alpha) * self.cellAlpha();
+        return @intCast((product + 127) / 255);
+    }
+};
+
+test "cell opacity: inverse cells honor background-opacity-cells" {
+    const testing = std.testing;
+    const opacity: f64 = 0.35;
+    const cell_alpha: u8 = @intFromFloat(255.0 * opacity);
+    const codepoints = [_]u21{ 'a', 0x2584, 0x2588 };
+    for ([_]bool{ false, true }) |cells| {
+        for ([_]bool{ false, true }) |highlighted| {
+            for ([_]bool{ false, true }) |inverse| {
+                for ([_]bool{ false, true }) |explicit_bg| {
+                    for (codepoints) |codepoint| {
+                        for ([_]u8{ 0, 128, 255 }) |fg_alpha| {
+                            const decision: CellOpacity = .{
+                                .cells = cells,
+                                .highlighted = highlighted,
+                                .inverse = inverse,
+                                .opacity = opacity,
+                            };
+
+                            const fill = decision.fillAlpha(explicit_bg);
+                            const expected_fill: u8 = if (highlighted)
+                                255
+                            else if (!inverse and !explicit_bg)
+                                0
+                            else if (cells)
+                                cell_alpha
+                            else
+                                255;
+                            try testing.expectEqual(expected_fill, fill);
+
+                            const glyph = decision.glyphAlpha(fg_alpha);
+                            const fades = cells and inverse and !highlighted;
+                            if (!fades) {
+                                try testing.expectEqual(fg_alpha, glyph);
+                                continue;
+                            }
+                            try testing.expect(glyph <= cell_alpha);
+                            try testing.expect(glyph <= fg_alpha);
+                            if (fg_alpha == 255) try testing.expectEqual(cell_alpha, glyph);
+
+                            // A translucent inverse cell never keeps a covering glyph's
+                            // opaque fill path, so no opaque background patch remains.
+                            try testing.expect(backgroundUsesForeground(
+                                inverse,
+                                codepoint,
+                                glyph,
+                            ));
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+test "cell opacity: disabled cell opacity preserves previous alphas" {
+    const testing = std.testing;
+    for ([_]bool{ false, true }) |highlighted| {
+        for ([_]bool{ false, true }) |inverse| {
+            for ([_]bool{ false, true }) |explicit_bg| {
+                const decision: CellOpacity = .{
+                    .cells = false,
+                    .highlighted = highlighted,
+                    .inverse = inverse,
+                    .opacity = 0.35,
+                };
+                const previous: u8 = if (highlighted or inverse or explicit_bg) 255 else 0;
+                try testing.expectEqual(previous, decision.fillAlpha(explicit_bg));
+                for (0..256) |fg_alpha| {
+                    try testing.expectEqual(
+                        @as(u8, @intCast(fg_alpha)),
+                        decision.glyphAlpha(@intCast(fg_alpha)),
+                    );
+                }
+            }
+        }
+    }
+}
+
+test "cell opacity: full opacity keeps inverse cells opaque" {
+    const testing = std.testing;
+    const decision: CellOpacity = .{
+        .cells = true,
+        .highlighted = false,
+        .inverse = true,
+        .opacity = 1,
+    };
+    try testing.expectEqual(@as(u8, 255), decision.fillAlpha(false));
+    try testing.expectEqual(@as(u8, 255), decision.glyphAlpha(255));
+    try testing.expectEqual(@as(u8, 128), decision.glyphAlpha(128));
+}
+
+test "cell opacity: decisions are pure" {
+    const testing = std.testing;
+    const decision: CellOpacity = .{
+        .cells = true,
+        .highlighted = false,
+        .inverse = true,
+        .opacity = 0.35,
+    };
+    try testing.expectEqual(decision.fillAlpha(true), decision.fillAlpha(true));
+    try testing.expectEqual(decision.glyphAlpha(200), decision.glyphAlpha(200));
+}
+
 /// Cell buffer contents cached independently by each swap-chain frame.
 const CellBufferCache = struct {
     generation: ?u64 = null,
@@ -2856,8 +2998,6 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
                     managed_style.*
                 else
                     .{};
-                const alpha = style.foregroundAlpha(self.config.faint_opacity);
-
                 // True if this cell is selected
                 const selected: enum {
                     false,
@@ -2894,6 +3034,16 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
 
                     break :selected .false;
                 };
+
+                const cell_opacity = CellOpacity{
+                    .cells = self.config.background_opacity_cells,
+                    .highlighted = selected != .false,
+                    .inverse = style.flags.inverse,
+                    .opacity = self.config.background_opacity,
+                };
+                const alpha = cell_opacity.glyphAlpha(
+                    style.foregroundAlpha(self.config.faint_opacity),
+                );
 
                 // The `_style` suffixed values are the colors based on
                 // the cell style (SGR), before applying any additional
@@ -2986,37 +3136,11 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
                 {
                     const rgb = bg orelse state.colors.background;
 
-                    // Determine our background alpha. If we have transparency configured
-                    // then this is dynamic depending on some situations. This is all
-                    // in an attempt to make transparency look the best for various
-                    // situations. See inline comments.
-                    const bg_alpha: u8 = bg_alpha: {
-                        const default: u8 = 255;
-
-                        // Cells that are selected should be fully opaque.
-                        if (selected != .false) break :bg_alpha default;
-
-                        // Cells that are reversed should be fully opaque.
-                        if (style.flags.inverse) break :bg_alpha default;
-
-                        // If the user requested to have opacity on all cells, apply it.
-                        if (self.config.background_opacity_cells and bg_style != null) {
-                            var opacity: f64 = @floatFromInt(default);
-                            opacity *= self.config.background_opacity;
-                            break :bg_alpha @intFromFloat(opacity);
-                        }
-
-                        // Cells that have an explicit bg color should be fully opaque.
-                        if (bg_style != null) break :bg_alpha default;
-
-                        // Otherwise, we won't draw the bg for this cell,
-                        // we'll let the already-drawn background color
-                        // show through.
-                        break :bg_alpha 0;
-                    };
-
                     self.cells.bgCell(y, x).* = .{
-                        rgb.r, rgb.g, rgb.b, bg_alpha,
+                        rgb.r,
+                        rgb.g,
+                        rgb.b,
+                        cell_opacity.fillAlpha(bg_style != null),
                     };
                 }
 
