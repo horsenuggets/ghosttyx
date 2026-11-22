@@ -12,6 +12,9 @@ class TransparentTitlebarTerminalWindow: TerminalWindow {
     private var tabGroupWindowsObservation: NSKeyValueObservation?
     private var tabBarVisibleObservation: NSKeyValueObservation?
 
+    /// Keeps the native titlebar background hidden after AppKit tries to show it again.
+    private let titlebarBackgroundKeeper = HiddenViewKeeper()
+
     deinit {
         tabGroupWindowsObservation?.invalidate()
         tabBarVisibleObservation?.invalidate()
@@ -110,8 +113,11 @@ class TransparentTitlebarTerminalWindow: TerminalWindow {
         }
 
         // In all cases, we have to hide the background view since this has multiple subviews
-        // that force a background color.
-        titlebarBackgroundView?.isHidden = true
+        // that force a background color. AppKit can show it again after this sync, such as
+        // when the tab bar is removed on macOS 27, so keep it hidden instead of hiding it once.
+        if let titlebarBackgroundView {
+            titlebarBackgroundKeeper.keep(titlebarBackgroundView)
+        }
     }
 
     @available(macOS 13.0, *)
