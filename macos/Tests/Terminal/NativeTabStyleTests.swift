@@ -181,6 +181,89 @@ struct NativeTabStyleTests {
         #expect(!title.isHiddenOrHasHiddenAncestor)
     }
 
+    /// Builds the Tahoe track hierarchy, where the track's regular glass view draws its
+    /// material with a backdrop layer beside the portal that renders the tabs.
+    @available(macOS 26.0, *)
+    private func makeGlassTrack() -> GlassTrack {
+        let bar = NSView()
+        let track = TabStyleNSTabBarTrackView()
+        let glass = NSGlassEffectView()
+        let content = NSView()
+        let tabs = [NSView(), NSView()]
+        tabs.forEach { content.addSubview($0) }
+        glass.contentView = content
+        glass.wantsLayer = true
+        track.addSubview(glass)
+        bar.addSubview(track)
+        // AppKit may wrap the content view in a holder, which is where the fill goes.
+        let holder = glass.subviews.first { tabs[0].isDescendant(of: $0) } ?? content
+
+        // The glass view routes added subviews into its content, so the render branch is
+        // attached beside the content at the layer level, like AppKit's own root view.
+        let renderBranch = CALayer()
+        let backdropClass = NSClassFromString("CABackdropLayer") as? CALayer.Type ?? CALayer.self
+        let backdrop = backdropClass.init()
+        let portal = CALayer()
+        renderBranch.addSublayer(backdrop)
+        renderBranch.addSublayer(portal)
+        glass.layer?.addSublayer(renderBranch)
+
+        // Each tab's own glass sits inside the content branch and must stay native.
+        let tabBackdrop = backdropClass.init()
+        tabs[1].wantsLayer = true
+        tabs[1].layer?.addSublayer(tabBackdrop)
+        return GlassTrack(
+            bar: bar, holder: holder, holderSubviews: holder.subviews, tabs: tabs,
+            renderBranch: renderBranch, backdrop: backdrop, portal: portal,
+            tabBackdrop: tabBackdrop
+        )
+    }
+
+    @Test func glassTrackHidesOnlyItsBackdropAndRestores() {
+        guard #available(macOS 26.0, *) else { return }
+        #expect(NSStringFromClass(type(of: makeGlassTrack().backdrop)) == "CABackdropLayer")
+        let style = NativeTabStyle()
+        let track = makeGlassTrack()
+        let colors = NativeTabStyle.Colors(bar: NSColor.red.withAlphaComponent(0))
+        for _ in 0..<2 {
+            style.apply(bar: track.bar, tabs: track.tabs, selectedIndex: 0, colors: colors)
+            #expect(track.backdrop.isHidden)
+            #expect(!track.portal.isHidden)
+            #expect(!track.renderBranch.isHidden)
+            #expect(!track.tabBackdrop.isHidden)
+            #expect(!track.tabs.contains { $0.isHiddenOrHasHiddenAncestor })
+            #expect(track.holder.subviews.count == track.holderSubviews.count + 1)
+        }
+
+        // Changing the color keeps the material hidden without stacking backgrounds.
+        style.apply(
+            bar: track.bar, tabs: track.tabs, selectedIndex: 1,
+            colors: .init(bar: NSColor.blue.withAlphaComponent(0.5))
+        )
+        #expect(track.backdrop.isHidden)
+        #expect(track.holder.subviews.count == track.holderSubviews.count + 1)
+
+        // Tab-only colors leave the track's native material alone.
+        style.apply(bar: track.bar, tabs: track.tabs, selectedIndex: 0, colors: .init(active: .red))
+        #expect(!track.backdrop.isHidden)
+
+        style.apply(bar: track.bar, tabs: track.tabs, selectedIndex: 0, colors: colors)
+        #expect(track.backdrop.isHidden)
+        style.apply(bar: track.bar, tabs: track.tabs, selectedIndex: 0, colors: .init())
+        #expect(!track.backdrop.isHidden)
+        #expect(track.holder.subviews == track.holderSubviews)
+    }
+
+    @Test func glassTrackPreservesBackdropsHiddenByAppKit() {
+        guard #available(macOS 26.0, *) else { return }
+        let style = NativeTabStyle()
+        let track = makeGlassTrack()
+        track.backdrop.isHidden = true
+        style.apply(bar: track.bar, tabs: track.tabs, selectedIndex: 0, colors: .init(bar: .black))
+        style.reset()
+        #expect(track.backdrop.isHidden)
+    }
+
     @Test func glassTabPreservesNativeRenderingBranches() {
         guard #available(macOS 26.0, *) else { return }
         let style = NativeTabStyle()
@@ -221,3 +304,15 @@ struct NativeTabStyleTests {
 }
 
 private final class TabStyleNSSubduedGlassEffectView: NSView {}
+private final class TabStyleNSTabBarTrackView: NSView {}
+
+private struct GlassTrack {
+    let bar: NSView
+    let holder: NSView
+    let holderSubviews: [NSView]
+    let tabs: [NSView]
+    let renderBranch: CALayer
+    let backdrop: CALayer
+    let portal: CALayer
+    let tabBackdrop: CALayer
+}
