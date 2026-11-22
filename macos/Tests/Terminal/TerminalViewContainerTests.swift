@@ -208,6 +208,13 @@ private struct TestGlassFilterAccess: GlassFilterAccess {
     }
 }
 
+enum CompanionFilterChange: CaseIterable {
+    case insert
+    case remove
+    case reorder
+    case replace
+}
+
 @MainActor
 struct NativeGlassOpticsTests {
     @Test func mapsOnlyExplicitOverridesAndConvertsDegrees() {
@@ -282,6 +289,69 @@ struct NativeGlassOpticsTests {
         adapter.update(root: root, optics: GlassOptics())
         #expect(replacement.filters?.first as? TestGlassFilter === replacementNative)
         #expect(diagnostics.isEmpty)
+    }
+
+    @Test(arguments: CompanionFilterChange.allCases, [false, true])
+    func companionFilterChangesPreserveTheNativeBaseline(
+        change: CompanionFilterChange,
+        afterRefresh: Bool
+    ) async throws {
+        let original = TestGlassFilter(["inputBlurRadius": 5])
+        let companion = try #require(CIFilter(name: "CIColorControls"))
+        let replacement = try #require(CIFilter(name: "CIColorControls"))
+        replacement.setValue(0.5, forKey: kCIInputSaturationKey)
+        let layer = CALayer()
+        layer.filters = [original, companion]
+        var diagnostics: [String] = []
+        let adapter = NativeGlassOptics(access: TestGlassFilterAccess()) { diagnostics.append($0) }
+        adapter.update(root: layer, optics: GlassOptics(blurRadius: 37))
+        let owned = try #require(layer.filters?.first as? TestGlassFilter)
+
+        let changed: [CIFilter]
+        switch change {
+        case .insert: changed = [replacement, owned, companion]
+        case .remove: changed = [owned]
+        case .reorder: changed = [companion, owned]
+        case .replace: changed = [owned, replacement]
+        }
+        layer.filters = changed
+        if afterRefresh {
+            await nextMainQueueTurn()
+            await nextMainQueueTurn()
+        }
+        adapter.update(root: layer, optics: GlassOptics())
+
+        let restored = layer.filters ?? []
+        let expected = changed.map { $0 === owned ? original : $0 }
+        #expect(restored.count == expected.count)
+        #expect(zip(restored, expected).allSatisfy { ($0 as AnyObject) === $1 })
+        #expect((restored.compactMap { $0 as? TestGlassFilter }.first)?.values["inputBlurRadius"] == 5)
+        #expect(diagnostics.isEmpty)
+    }
+
+    @Test(arguments: [false, true])
+    func otherRestorationPathsPreserveCompanionChanges(detach: Bool) throws {
+        let original = TestGlassFilter(["inputBlurRadius": 5])
+        let companion = try #require(CIFilter(name: "CIColorControls"))
+        let child = CALayer()
+        child.filters = [original]
+        let root = CALayer()
+        root.addSublayer(child)
+        let adapter = NativeGlassOptics(access: TestGlassFilterAccess()) { _ in }
+        adapter.update(root: root, optics: GlassOptics(blurRadius: 37))
+        let owned = try #require(child.filters?.first as? TestGlassFilter)
+        child.filters = [owned, companion]
+
+        if detach {
+            root.sublayers = []
+            adapter.update(root: root, optics: GlassOptics(blurRadius: 37))
+        } else {
+            adapter.update(root: CALayer(), optics: GlassOptics(blurRadius: 37))
+        }
+        #expect(child.filters?.first as? TestGlassFilter === original)
+        #expect(child.filters?.last as? CIFilter === companion)
+        #expect(child.filters?.count == 2)
+        adapter.restore()
     }
 
     @Test func overridesEqualToNativeValuesSurviveLaterNativeChanges() async {
