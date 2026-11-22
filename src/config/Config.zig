@@ -1015,6 +1015,12 @@ palette: Palette = .{},
 /// Setting this to `true` will apply the `background-opacity` to all cells
 /// regardless of whether they have an explicit background color set or not.
 ///
+/// This also applies to inverse (reverse video) cells. Their fill and the
+/// glyph drawn in the background color both use `background-opacity`, so
+/// inverse text and partial block characters stay translucent instead of
+/// leaving an opaque patch. Selected and search-highlighted cells remain
+/// fully opaque.
+///
 /// Available since: 1.2.0
 @"background-opacity-cells": bool = false,
 

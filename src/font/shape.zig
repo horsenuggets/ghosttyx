@@ -79,6 +79,10 @@ pub const RunOptions = struct {
     /// The x boundaries of the selection in this row.
     selection: ?[2]u16 = null,
 
+    /// The search highlights in this row. Runs break at their boundaries so a
+    /// ligature never spans highlighted and unhighlighted cells.
+    highlights: []const terminal.RenderState.Highlight = &.{},
+
     /// The cursor position within this row. This is used to break shaping
     /// on cursor boundaries. This can be disabled by setting this to
     /// null.
@@ -96,6 +100,7 @@ pub const RunOptions = struct {
 test {
     _ = Cache;
     _ = Shaper;
+    _ = run;
 
     // Always test noop
     _ = noop;
