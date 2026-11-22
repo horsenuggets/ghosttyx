@@ -3397,12 +3397,13 @@ keybind: Keybinds = .{},
 /// when the corresponding background color is set. An empty value restores
 /// full opacity. Changes apply when the configuration is reloaded.
 ///
-/// On macOS 26 and later, the tab strip's native background material is
-/// removed beneath the custom color. Transparency reveals the window's
-/// titlebar backdrop; use `background-opacity` to make the window itself
-/// transparent as well. Individual tabs retain native glass rendering so
-/// their titles and controls remain visible. Older macOS versions retain
-/// their native background beneath the color.
+/// On macOS 26 and later, the tab strip's native glass track is removed
+/// beneath the custom color, so lowering the opacity fades the strip toward
+/// the window background (the terminal `background` color). With
+/// `background-opacity` below 1, it fades toward whatever shows through the
+/// window instead. Individual tabs retain native glass rendering so their
+/// titles and controls remain visible. Older macOS versions retain their
+/// native background beneath the color.
 @"macos-tab-bar-opacity": f64 = 1.0,
 
 /// The opacity of `macos-tab-active-background`. See `macos-tab-bar-opacity`

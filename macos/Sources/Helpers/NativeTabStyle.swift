@@ -40,14 +40,19 @@ final class NativeTabStyle {
         if let bar, !colors.isEmpty {
             if let color = colors.bar {
                 // Tahoe puts the track's glass behind a separate content branch. The
-                // outer fill excludes that branch so opacity is not applied twice.
+                // outer fill excludes that branch so opacity is not applied twice, and
+                // the track's material is hidden so transparency reveals the window.
                 var trackContent: NSView?
-                if let effect = subduedGlass(in: bar),
+                if let effect = trackGlass(in: bar),
                    let content = effect.subviews.first(where: { branch in
                        tabs.contains { $0.isDescendant(of: branch) }
                    }) {
                     trackContent = content
-                    hideMaterial(in: effect, keeping: tabs, retained: &retainedMaterials)
+                    if isGlassEffectView(effect) {
+                        hideBackdrops(in: effect, excluding: content, retained: &retainedMaterials)
+                    } else {
+                        hideMaterial(in: effect, keeping: tabs, retained: &retainedMaterials)
+                    }
                     addBackground(to: content, color: color, rounded: true, retained: &retained)
                 }
                 addBackground(
@@ -95,9 +100,36 @@ final class NativeTabStyle {
         }
     }
 
+    private func hideBackdrops(in effect: NSView, excluding content: NSView, retained: inout Set<ObjectIdentifier>) {
+        // A regular glass view renders its content through portals in the same branch
+        // as its material, so hiding that branch would hide the tabs too. Only the
+        // backdrop layers that sample and draw the material are hidden. The content
+        // branch is skipped so each tab's own glass is left native.
+        func visit(_ layer: CALayer) {
+            guard layer !== content.layer else { return }
+            if NSStringFromClass(type(of: layer)) == "CABackdropLayer" {
+                let key = ObjectIdentifier(layer)
+                retained.insert(key)
+                if hiddenMaterials[key]?.layer !== layer {
+                    hiddenMaterials[key] = HiddenMaterial(layer: layer)
+                }
+                layer.isHidden = true
+                return
+            }
+            layer.sublayers?.forEach(visit)
+        }
+        if let layer = effect.layer { visit(layer) }
+    }
+
+    private func isGlassEffectView(_ view: NSView) -> Bool {
+        guard #available(macOS 26.0, *) else { return false }
+        return view is NSGlassEffectView
+    }
+
     @MainActor
     private struct HiddenMaterial {
         weak var view: NSView?
+        weak var layer: CALayer?
         let wasHidden: Bool
 
         init(view: NSView) {
@@ -105,8 +137,14 @@ final class NativeTabStyle {
             self.wasHidden = view.isHidden
         }
 
+        init(layer: CALayer) {
+            self.layer = layer
+            self.wasHidden = layer.isHidden
+        }
+
         func restore() {
             view?.isHidden = wasHidden
+            layer?.isHidden = wasHidden
         }
     }
 
@@ -150,10 +188,16 @@ final class NativeTabStyle {
         }
     }
 
-    private func subduedGlass(in view: NSView) -> NSView? {
+    /// Finds the glass material drawn behind the whole tab track. Depending on the macOS
+    /// release, AppKit draws it with a subdued glass view or a regular glass effect view
+    /// directly inside the track view. Each tab's own glass lives in its tab button.
+    private func trackGlass(in view: NSView) -> NSView? {
         for child in view.subviews {
-            if child.className.contains("NSSubduedGlassEffectView") { return child }
-            if let found = subduedGlass(in: child) { return found }
+            if child.className.contains("NSSubduedGlassEffectView") ||
+                (isGlassEffectView(child) && view.className.contains("NSTabBarTrackView")) {
+                return child
+            }
+            if let found = trackGlass(in: child) { return found }
         }
         return nil
     }
