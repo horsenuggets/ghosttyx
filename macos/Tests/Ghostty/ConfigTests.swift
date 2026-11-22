@@ -4,6 +4,67 @@ import SwiftUI
 
 @Suite
 struct ConfigTests {
+    @Test func glassOverridesAreUnsetUnlessConfigured() throws {
+        let config = try TemporaryConfig("")
+        #expect(config.macosGlassOptics == GlassOptics())
+        #expect(config.macosGlassInactiveTintOpacity == nil)
+        #expect(config.macosGlassInactiveTintSaturation == nil)
+        #expect(config.macosGlassTintColor == nil)
+        #expect(config.macosGlassTintOpacity == nil)
+    }
+
+    @Test func glassOverridesCrossTheConfigBridgeAndResetOnReload() throws {
+        let config = try TemporaryConfig("""
+        macos-glass-blur-radius = 0
+        macos-glass-highlight-angle = -90
+        macos-glass-highlight-spread = 120
+        macos-glass-highlight-strength = 2
+        macos-glass-inactive-tint-opacity = 0
+        macos-glass-inactive-tint-saturation = 0.5
+        macos-glass-refraction-amount = -60
+        macos-glass-refraction-height = 20
+        macos-glass-tint-color = #123456
+        macos-glass-tint-opacity = 0.25
+        """)
+        #expect(config.errors.isEmpty)
+        #expect(config.macosGlassOptics == GlassOptics(
+            blurRadius: 0,
+            highlightAngle: -90,
+            highlightSpread: 120,
+            highlightStrength: 2,
+            refractionAmount: -60,
+            refractionHeight: 20
+        ))
+        #expect(config.macosGlassInactiveTintOpacity == 0)
+        #expect(config.macosGlassInactiveTintSaturation == 0.5)
+        #expect(config.macosGlassTintColor == Color(red: 18.0 / 255, green: 52.0 / 255, blue: 86.0 / 255))
+        #expect(config.macosGlassTintOpacity == 0.25)
+
+        try config.reload("")
+        #expect(config.macosGlassOptics == GlassOptics())
+        #expect(config.macosGlassInactiveTintOpacity == nil)
+        #expect(config.macosGlassInactiveTintSaturation == nil)
+        #expect(config.macosGlassTintColor == nil)
+        #expect(config.macosGlassTintOpacity == nil)
+    }
+
+    @Test(arguments: [
+        "macos-glass-blur-radius = -1",
+        "macos-glass-blur-radius = nan",
+        "macos-glass-highlight-angle = inf",
+        "macos-glass-highlight-spread = 361",
+        "macos-glass-highlight-strength = -1",
+        "macos-glass-inactive-tint-opacity = -0.1",
+        "macos-glass-inactive-tint-saturation = -1",
+        "macos-glass-refraction-amount = -inf",
+        "macos-glass-refraction-height = -1",
+        "macos-glass-tint-opacity = 1.1",
+    ])
+    func invalidGlassOverridesProduceDiagnostics(text: String) throws {
+        let config = try TemporaryConfig(text)
+        #expect(!config.errors.isEmpty)
+    }
+
     // MARK: - Boolean Properties
 
     @Test func initialWindowDefaultsToTrue() throws {

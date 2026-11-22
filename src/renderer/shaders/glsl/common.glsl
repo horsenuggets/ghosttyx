@@ -93,17 +93,19 @@ float contrast_ratio(vec3 color1, vec3 color2) {
 // return a color that satisfies the contrast ratio. Currently, the color
 // is always white or black, whichever has the highest contrast ratio.
 //
-// Takes colors in linear RGB space. If your colors are gamma
-// encoded, linearize them before using them with this function.
+// Takes premultiplied colors in linear RGB space. Contrast correction
+// changes the foreground RGB without overriding its requested opacity.
 vec4 contrasted_color(float min_ratio, vec4 fg, vec4 bg) {
-    float ratio = contrast_ratio(fg.rgb, bg.rgb);
+    if (fg.a == 0.0) return vec4(0.0);
+
+    float ratio = contrast_ratio(fg.rgb / fg.a, bg.rgb);
     if (ratio < min_ratio) {
         float white_ratio = contrast_ratio(vec3(1.0, 1.0, 1.0), bg.rgb);
         float black_ratio = contrast_ratio(vec3(0.0, 0.0, 0.0), bg.rgb);
         if (white_ratio > black_ratio) {
-            return vec4(1.0);
+            return vec4(fg.a);
         } else {
-            return vec4(0.0, 0.0, 0.0, 1.0);
+            return vec4(0.0, 0.0, 0.0, fg.a);
         }
     }
 

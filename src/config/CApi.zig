@@ -228,6 +228,61 @@ test "ghostty_config_get: float" {
     try testing.expectApproxEqAbs(@as(f64, 0.42), out, 0.000001);
 }
 
+test "ghostty_config_get: macos glass optional numeric overrides" {
+    const testing = std.testing;
+    var cfg = try Config.default(testing.allocator);
+    defer cfg.deinit();
+
+    inline for (.{
+        .{ "macos-glass-blur-radius", @as(f64, 37) },
+        .{ "macos-glass-highlight-angle", @as(f64, -90) },
+        .{ "macos-glass-highlight-spread", @as(f64, 240) },
+        .{ "macos-glass-highlight-strength", @as(f64, 2.5) },
+        .{ "macos-glass-inactive-tint-opacity", @as(f64, 0) },
+        .{ "macos-glass-inactive-tint-saturation", @as(f64, 0) },
+        .{ "macos-glass-refraction-amount", @as(f64, -120) },
+        .{ "macos-glass-refraction-height", @as(f64, 12) },
+        .{ "macos-glass-tint-opacity", @as(f64, 0.25) },
+    }) |entry| {
+        const key = entry[0];
+        var out: f64 = -1;
+        try testing.expect(!ghostty_config_get(&cfg, &out, key, key.len));
+        try testing.expectEqual(@as(f64, -1), out);
+
+        @field(cfg, key) = entry[1];
+        try testing.expect(ghostty_config_get(&cfg, &out, key, key.len));
+        try testing.expectEqual(entry[1], out);
+
+        @field(cfg, key) = null;
+        try testing.expect(!ghostty_config_get(&cfg, &out, key, key.len));
+        try testing.expectEqual(entry[1], out);
+    }
+}
+
+test "ghostty_config_get: macos glass optional tint color" {
+    const testing = std.testing;
+    var cfg = try Config.default(testing.allocator);
+    defer cfg.deinit();
+    const key = "macos-glass-tint-color";
+    var out: Config.Color.C = .{ .r = 1, .g = 2, .b = 3 };
+    try testing.expect(!ghostty_config_get(&cfg, &out, key, key.len));
+    try testing.expectEqual(@as(u8, 1), out.r);
+    try testing.expectEqual(@as(u8, 2), out.g);
+    try testing.expectEqual(@as(u8, 3), out.b);
+
+    cfg.@"macos-glass-tint-color" = .{ .r = 0x12, .g = 0x34, .b = 0x56 };
+    try testing.expect(ghostty_config_get(&cfg, &out, key, key.len));
+    try testing.expectEqual(@as(u8, 0x12), out.r);
+    try testing.expectEqual(@as(u8, 0x34), out.g);
+    try testing.expectEqual(@as(u8, 0x56), out.b);
+
+    cfg.@"macos-glass-tint-color" = null;
+    try testing.expect(!ghostty_config_get(&cfg, &out, key, key.len));
+    try testing.expectEqual(@as(u8, 0x12), out.r);
+    try testing.expectEqual(@as(u8, 0x34), out.g);
+    try testing.expectEqual(@as(u8, 0x56), out.b);
+}
+
 test "ghostty_config_get: struct cval conversion" {
     const testing = std.testing;
     const alloc = testing.allocator;

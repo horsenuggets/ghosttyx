@@ -407,3 +407,17 @@ fn comparableStyle(style: terminal.Style) terminal.Style {
 
     return s;
 }
+
+test "foreground alpha separates shaping runs" {
+    const testing = std.testing;
+    const fully_opaque: terminal.Style = .{
+        .fg_color = .{ .rgb = .{ .r = 255, .g = 100, .b = 50 } },
+    };
+    var translucent = fully_opaque;
+    translucent.fg_alpha = 128;
+    try testing.expect(!comparableStyle(fully_opaque).eql(comparableStyle(translucent)));
+
+    var different_background = translucent;
+    different_background.bg_color = .{ .rgb = .{ .r = 10, .g = 20, .b = 30 } };
+    try testing.expect(comparableStyle(translucent).eql(comparableStyle(different_background)));
+}

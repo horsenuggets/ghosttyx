@@ -413,6 +413,38 @@ test Dynamic {
     _ = Dynamic;
 }
 
+/// An RGB color with an explicit alpha channel.
+pub const RGBA = packed struct(u32) {
+    r: u8,
+    g: u8,
+    b: u8,
+    a: u8,
+
+    pub const C = extern struct {
+        r: u8,
+        g: u8,
+        b: u8,
+        a: u8,
+    };
+
+    pub fn fromC(c: C) RGBA {
+        return .{ .r = c.r, .g = c.g, .b = c.b, .a = c.a };
+    }
+
+    pub fn cval(self: RGBA) C {
+        return .{ .r = self.r, .g = self.g, .b = self.b, .a = self.a };
+    }
+};
+
+test "RGBA C conversion" {
+    const testing = std.testing;
+    const rgba: RGBA = .{ .r = 255, .g = 128, .b = 64, .a = 32 };
+    try testing.expectEqual(rgba, RGBA.fromC(rgba.cval()));
+    try testing.expectEqual(@as(usize, 4), @sizeOf(RGBA));
+    try testing.expectEqual(@as(usize, 4), @sizeOf(RGBA.C));
+    try testing.expectEqual(@as(usize, 3), @offsetOf(RGBA.C, "a"));
+}
+
 /// RGB
 pub const RGB = packed struct(u24) {
     r: u8 = 0,

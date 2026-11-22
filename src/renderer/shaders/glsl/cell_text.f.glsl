@@ -84,10 +84,14 @@ void main() {
             // For now, we assume that color glyphs
             // are already premultiplied linear colors.
             vec4 color = texture(atlas_color, in_data.tex_coord);
+            if (color.a == 0.0 || in_data.color.a == 0.0) {
+                out_FragColor = vec4(0.0);
+                return;
+            }
 
-            // If we are doing linear blending, we can return this right away.
+            // If we are doing linear blending, only glyph opacity remains.
             if (use_linear_blending) {
-                out_FragColor = color;
+                out_FragColor = color * in_data.color.a;
                 return;
             }
 
@@ -97,7 +101,7 @@ void main() {
             color = unlinearize(color);
             color.rgb *= vec3(color.a);
 
-            out_FragColor = color;
+            out_FragColor = color * in_data.color.a;
             return;
         }
     }
