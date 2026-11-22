@@ -154,7 +154,7 @@ class TitlebarTabsTahoeTerminalWindow: TransparentTitlebarTerminalWindow, NSTool
         }
 
         // Find our clip view
-        guard let clipView = tabBarView.firstSuperview(withClassName: "NSTitlebarAccessoryClipView") else { return }
+        guard let clipView = Self.accessoryClipView(containing: tabBarView) else { return }
         guard let accessoryView = clipView.subviews[safe: 0] else { return }
         guard let toolbarView = titlebarView.firstDescendant(withClassName: "NSToolbarView") else { return }
 
@@ -212,6 +212,22 @@ class TitlebarTabsTahoeTerminalWindow: TransparentTitlebarTerminalWindow, NSTool
                 self.setupTabBar()
             }
         }
+    }
+
+    /// The private classes AppKit uses for the view that clips a titlebar accessory. macOS 26
+    /// uses `NSTitlebarAccessoryClipView`, and macOS 27 renamed it to
+    /// `NSTitlebarAccessoryContainerView`. Without a match the tab bar stays a narrow
+    /// right-aligned accessory that cuts off every tab but the last.
+    static let accessoryClipViewClassNames = [
+        "NSTitlebarAccessoryClipView",
+        "NSTitlebarAccessoryContainerView",
+    ]
+
+    /// Returns the titlebar accessory view that clips the given tab bar.
+    static func accessoryClipView(containing tabBarView: NSView) -> NSView? {
+        accessoryClipViewClassNames.lazy
+            .compactMap { tabBarView.firstSuperview(withClassName: $0) }
+            .first
     }
 
     func removeTabBar() {
