@@ -151,6 +151,85 @@ struct ConfigTests {
         #expect(config.scrollbar == .never)
     }
 
+    // MARK: - Optional Tab Background Colors
+
+    @Test(arguments: [
+        ("macos-tab-bar-background", \Ghostty.Config.macosTabBarBackground),
+        ("macos-tab-active-background", \Ghostty.Config.macosTabActiveBackground),
+        ("macos-tab-inactive-background", \Ghostty.Config.macosTabInactiveBackground),
+    ])
+    func macosTabBackgroundColors(key: String, accessor: KeyPath<Ghostty.Config, Color?>) throws {
+        let config = try TemporaryConfig("")
+        #expect(config[keyPath: accessor] == nil)
+
+        let hex = Color(red: 0x12 / 255.0, green: 0x34 / 255.0, blue: 0x56 / 255.0)
+        for value in ["#123456", "123456"] {
+            try config.reload("\(key) = \(value)")
+            #expect(config.errors.isEmpty)
+            #expect(config[keyPath: accessor] == hex)
+        }
+
+        try config.reload("\(key) = red")
+        #expect(config.errors.isEmpty)
+        #expect(config[keyPath: accessor] == Color(red: 1, green: 0, blue: 0))
+
+        // An explicit black color must not be confused with an unset value.
+        try config.reload("\(key) = #000000")
+        #expect(config.errors.isEmpty)
+        #expect(config[keyPath: accessor] == Color(red: 0, green: 0, blue: 0))
+
+        for value in ["not-a-color", "#GGHHII"] {
+            try config.reload("\(key) = \(value)")
+            #expect(!config.errors.isEmpty)
+            #expect(config[keyPath: accessor] == nil)
+
+            // Invalid values leave an earlier valid assignment intact.
+            try config.reload("""
+            \(key) = #123456
+            \(key) = \(value)
+            """)
+            #expect(!config.errors.isEmpty)
+            #expect(config[keyPath: accessor] == hex)
+        }
+
+        try config.reload("""
+        \(key) = #123456
+        \(key) =
+        """)
+        #expect(config.errors.isEmpty)
+        #expect(config[keyPath: accessor] == nil)
+
+        // Removing an override on reload restores the native appearance.
+        try config.reload("\(key) = #123456")
+        #expect(config[keyPath: accessor] == hex)
+        try config.reload("")
+        #expect(config.errors.isEmpty)
+        #expect(config[keyPath: accessor] == nil)
+    }
+
+    @Test(arguments: [
+        ("macos-tab-bar-opacity", \Ghostty.Config.macosTabBarOpacity),
+        ("macos-tab-active-opacity", \Ghostty.Config.macosTabActiveOpacity),
+        ("macos-tab-inactive-opacity", \Ghostty.Config.macosTabInactiveOpacity),
+    ])
+    func macosTabOpacities(key: String, accessor: KeyPath<Ghostty.Config, Double>) throws {
+        let config = try TemporaryConfig("")
+        #expect(config[keyPath: accessor] == 1)
+        for (value, expected) in [("0", 0.0), ("0.5", 0.5), ("1", 1.0), ("-1", 0.0), ("2", 1.0)] {
+            try config.reload("\(key) = \(value)")
+            #expect(config.errors.isEmpty)
+            #expect(config[keyPath: accessor] == expected)
+        }
+        try config.reload("\(key) = invalid")
+        #expect(!config.errors.isEmpty)
+        try config.reload("\(key) = 0.5\n\(key) =")
+        #expect(config.errors.isEmpty)
+        #expect(config[keyPath: accessor] == 1)
+        try config.reload("\(key) = 0.5")
+        try config.reload("")
+        #expect(config[keyPath: accessor] == 1)
+    }
+
     // MARK: - Numeric Properties
 
     @Test func backgroundOpacityDefaultsToOne() throws {
