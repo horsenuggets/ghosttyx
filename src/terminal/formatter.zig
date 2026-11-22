@@ -1554,7 +1554,7 @@ pub const PageFormatter = struct {
 
             // layout since we're primarily using it as a CSS wrapper.
             .html => {
-                try writer.writeAll("<a href=\"");
+                try writer.writeAll("<a style=\"color: inherit;\" href=\"");
                 for (uri) |byte| try self.writeCodepoint(
                     writer,
                     byte,
@@ -4329,6 +4329,41 @@ test "TerminalFormatter foreground alpha HTML leaves background opaque" {
     try testing.expect(std.mem.indexOf(u8, output, "text-decoration-color:") == null);
 }
 
+test "TerminalFormatter foreground alpha HTML hyperlinks inherit color" {
+    const testing = std.testing;
+    const alloc = testing.allocator;
+    const cases = [_]struct { alpha: u8, faint: bool, foreground: []const u8 }{
+        .{ .alpha = 0, .faint = false, .foreground = "color: rgba(255, 100, 50, 0.000000);" },
+        .{ .alpha = 0, .faint = true, .foreground = "color: rgba(255, 100, 50, 0.000000);" },
+        .{ .alpha = 128, .faint = false, .foreground = "color: rgba(255, 100, 50, 0.501961);" },
+        .{ .alpha = 128, .faint = true, .foreground = "color: rgba(255, 100, 50, 0.250980);" },
+        .{ .alpha = 255, .faint = false, .foreground = "color: rgb(255, 100, 50);" },
+        .{ .alpha = 255, .faint = true, .foreground = "color: rgba(255, 100, 50, 0.500000);" },
+    };
+    for (cases) |case| {
+        var builder: std.Io.Writer.Allocating = .init(alloc);
+        defer builder.deinit();
+        var t = try Terminal.init(alloc, .{ .cols = 16, .rows = 2 });
+        defer t.deinit(alloc);
+        var stream = t.vtStream();
+        defer stream.deinit();
+        var sequence_buf: [160]u8 = undefined;
+        const sequence = try std.fmt.bufPrint(
+            &sequence_buf,
+            "\x1b[48:2::10:20:30;38:6::255:100:50:{d}m{s}\x1b]8;;https://example.com\x1b\\link\x1b]8;;\x1b\\\x1b[0m",
+            .{ case.alpha, if (case.faint) "\x1b[2m" else "" },
+        );
+        stream.nextSlice(sequence);
+        const formatter: TerminalFormatter = .init(&t, .html);
+        try formatter.format(&builder.writer);
+        const output = builder.writer.buffered();
+        try testing.expect(std.mem.indexOf(u8, output, case.foreground) != null);
+        try testing.expect(std.mem.indexOf(u8, output, "background-color: rgb(10, 20, 30);") != null);
+        try testing.expect(std.mem.indexOf(u8, output, "<a style=\"color: inherit;\" href=\"https://example.com\">link") != null);
+        try testing.expect(std.mem.indexOf(u8, output, "opacity:") == null);
+    }
+}
+
 test "TerminalFormatter with selection" {
     const testing = std.testing;
     const alloc = testing.allocator;
@@ -6144,7 +6179,7 @@ test "Page HTML with hyperlinks" {
 
     try testing.expectEqualStrings(
         "<div style=\"font-family: monospace; white-space: pre;\">" ++
-            "<a href=\"https://example.com\">link text</a> normal" ++
+            "<a style=\"color: inherit;\" href=\"https://example.com\">link text</a> normal" ++
             "</div>",
         output,
     );
@@ -6179,9 +6214,9 @@ test "Page HTML with multiple hyperlinks" {
 
     try testing.expectEqualStrings(
         "<div style=\"font-family: monospace; white-space: pre;\">" ++
-            "<a href=\"https://first.com\">first</a>" ++
+            "<a style=\"color: inherit;\" href=\"https://first.com\">first</a>" ++
             " " ++
-            "<a href=\"https://second.com\">second</a>" ++
+            "<a style=\"color: inherit;\" href=\"https://second.com\">second</a>" ++
             "</div>",
         output,
     );
@@ -6215,7 +6250,7 @@ test "Page HTML with hyperlink escaping" {
 
     try testing.expectEqualStrings(
         "<div style=\"font-family: monospace; white-space: pre;\">" ++
-            "<a href=\"https://example.com?a=1&amp;b=2\">link</a>" ++
+            "<a style=\"color: inherit;\" href=\"https://example.com?a=1&amp;b=2\">link</a>" ++
             "</div>",
         output,
     );
@@ -6250,7 +6285,7 @@ test "Page HTML with styled hyperlink" {
     try testing.expectEqualStrings(
         "<div style=\"font-family: monospace; white-space: pre;\">" ++
             "<div style=\"display: inline;font-weight: bold;\">" ++
-            "<a href=\"https://example.com\">bold link</div></a>" ++
+            "<a style=\"color: inherit;\" href=\"https://example.com\">bold link</div></a>" ++
             "</div>",
         output,
     );
@@ -6285,7 +6320,7 @@ test "Page HTML hyperlink closes style before anchor" {
     try testing.expectEqualStrings(
         "<div style=\"font-family: monospace; white-space: pre;\">" ++
             "<div style=\"display: inline;font-weight: bold;\">" ++
-            "<a href=\"https://example.com\">bold</div> plain</a>" ++
+            "<a style=\"color: inherit;\" href=\"https://example.com\">bold</div> plain</a>" ++
             "</div>",
         output,
     );
@@ -6322,7 +6357,7 @@ test "Page HTML hyperlink point map maps closing to previous cell" {
 
     const expected_output =
         "<div style=\"font-family: monospace; white-space: pre;\">" ++
-        "<a href=\"https://example.com\">link</a> normal" ++
+        "<a style=\"color: inherit;\" href=\"https://example.com\">link</a> normal" ++
         "</div>";
     try testing.expectEqualStrings(expected_output, output);
     try testing.expectEqual(expected_output.len, point_map.items.len);

@@ -39,6 +39,7 @@ pub const structs: std.StaticStringMap(StructInfo) = structs: {
         .{ "GhosttyBuffer", StructInfo.init(lib.Buffer) },
         .{ "GhosttyCodepoints", StructInfo.init(Codepoints) },
         .{ "GhosttyColorRgb", StructInfo.init(color.RGB.C) },
+        .{ "GhosttyColorRgba", StructInfo.init(color.RGBA.C) },
         .{ "GhosttyDeviceAttributes", StructInfo.init(terminal.DeviceAttributes) },
         .{ "GhosttyDeviceAttributesPrimary", StructInfo.init(terminal.DeviceAttributes.Primary) },
         .{ "GhosttyDeviceAttributesSecondary", StructInfo.init(terminal.DeviceAttributes.Secondary) },
@@ -226,6 +227,30 @@ test "json parses" {
     // Verify field offsets make sense (cols should be at 0)
     const cols = fields.get("cols").?.object;
     try std.testing.expectEqual(0, cols.get("offset").?.integer);
+}
+
+test "foreground RGBA type metadata" {
+    const testing = std.testing;
+    const parsed = try std.json.parseFromSlice(
+        std.json.Value,
+        testing.allocator,
+        std.mem.span(get_json()),
+        .{},
+    );
+    defer parsed.deinit();
+
+    const rgba = parsed.value.object.get("GhosttyColorRgba").?.object;
+    try testing.expectEqual(@sizeOf(color.RGBA.C), rgba.get("size").?.integer);
+    try testing.expectEqual(@alignOf(color.RGBA.C), rgba.get("align").?.integer);
+    const fields = rgba.get("fields").?.object;
+    try testing.expectEqual(@as(usize, 4), fields.count());
+    inline for (@typeInfo(color.RGBA.C).@"struct".fields) |field| {
+        const info = fields.get(field.name).?.object;
+        try testing.expectEqual(@offsetOf(color.RGBA.C, field.name), info.get("offset").?.integer);
+        try testing.expectEqual(@as(i64, 1), info.get("size").?.integer);
+        try testing.expectEqualStrings("u8", info.get("type").?.string);
+    }
+    try testing.expectEqual(@as(i64, 3), fields.get("a").?.object.get("offset").?.integer);
 }
 
 test "struct sizes are non-zero" {
