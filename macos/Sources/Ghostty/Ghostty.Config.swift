@@ -640,14 +640,23 @@ extension Ghostty {
             var color: ghostty_config_color_s = .init()
             let key = "split-divider-color"
             if !ghostty_config_get(config, &color, key, UInt(key.lengthOfBytes(using: .utf8))) {
-                return Color(newColor)
+                return Color(newColor.withAlphaComponent(splitDividerOpacity))
             }
 
             return .init(
                 red: Double(color.r) / 255,
                 green: Double(color.g) / 255,
-                blue: Double(color.b) / 255
+                blue: Double(color.b) / 255,
+                opacity: splitDividerOpacity
             )
+        }
+
+        var splitDividerOpacity: Double {
+            guard let config = self.config else { return 1 }
+            var value = 1.0
+            let key = "split-divider-opacity"
+            _ = ghostty_config_get(config, &value, key, UInt(key.utf8.count))
+            return value
         }
 
         #if canImport(AppKit)
