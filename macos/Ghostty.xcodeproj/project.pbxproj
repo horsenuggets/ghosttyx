@@ -246,6 +246,7 @@
 				"Helpers/Extensions/UndoManager+Extension.swift",
 				"Helpers/Extensions/View+Extension.swift",
 				Helpers/Fullscreen.swift,
+				Helpers/HiddenViewKeeper.swift,
 				Helpers/HostingWindow.swift,
 				Helpers/KeyboardLayout.swift,
 				Helpers/LastWindowPosition.swift,

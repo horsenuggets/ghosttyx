@@ -40,4 +40,57 @@ struct TitlebarTabsTests {
         ])
     }
 
+    @Test func keptViewStaysHiddenWhenShownAgain() {
+        let keeper = HiddenViewKeeper()
+        let view = NSView()
+        keeper.keep(view)
+        #expect(view.isHidden)
+
+        // AppKit showing the view again must not bring it back.
+        for _ in 0..<3 {
+            view.isHidden = false
+            #expect(view.isHidden)
+        }
+    }
+
+    @Test func keepingTheSameViewTwiceStillKeepsItHidden() {
+        let keeper = HiddenViewKeeper()
+        let view = NSView()
+        keeper.keep(view)
+        keeper.keep(view)
+        view.isHidden = false
+        #expect(view.isHidden)
+    }
+
+    @Test func keepingAReplacementViewReleasesThePreviousOne() {
+        let keeper = HiddenViewKeeper()
+        let old = NSView()
+        let replacement = NSView()
+        keeper.keep(old)
+        keeper.keep(replacement)
+
+        old.isHidden = false
+        replacement.isHidden = false
+        #expect(!old.isHidden)
+        #expect(replacement.isHidden)
+    }
+
+    @Test func releasedViewCanBeShownAgain() {
+        let keeper = HiddenViewKeeper()
+        let view = NSView()
+        keeper.keep(view)
+        keeper.release()
+        #expect(view.isHidden)
+
+        view.isHidden = false
+        #expect(!view.isHidden)
+    }
+
+    @Test func releasingWithoutAViewDoesNothing() {
+        let keeper = HiddenViewKeeper()
+        keeper.release()
+        let view = NSView()
+        view.isHidden = false
+        #expect(!view.isHidden)
+    }
 }
