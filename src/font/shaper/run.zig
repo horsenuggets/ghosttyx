@@ -100,6 +100,10 @@ pub const RunIterator = struct {
                 }
             }
 
+            // Highlights change cell colors and opacity, so they split runs
+            // the same way a selection does.
+            if (breaksAtHighlight(self.opts.highlights, self.i, j)) break;
+
             // If we're a spacer, then we ignore it
             switch (cell.wide) {
                 .narrow, .wide => {},
@@ -406,6 +410,39 @@ fn comparableStyle(style: terminal.Style) terminal.Style {
     s.bg_color = .none;
 
     return s;
+}
+
+/// Whether a run that starts at `start` must break before cell `j` because a
+/// highlight starts at `j` or ends just before it.
+fn breaksAtHighlight(
+    highlights: []const terminal.RenderState.Highlight,
+    start: usize,
+    j: usize,
+) bool {
+    if (j <= start) return false;
+    for (highlights) |hl| {
+        if (j == hl.range[0] or j == @as(usize, hl.range[1]) + 1) return true;
+    }
+    return false;
+}
+
+test "search highlights separate shaping runs" {
+    const testing = std.testing;
+    const highlights = [_]terminal.RenderState.Highlight{
+        .{ .tag = 0, .range = .{ 3, 4 } },
+        .{ .tag = 1, .range = .{ 0, 0 } },
+    };
+    for (0..8) |start| {
+        for (0..8) |j| {
+            const expected = j > start and (j == 3 or j == 5 or j == 1);
+            try testing.expectEqual(expected, breaksAtHighlight(&highlights, start, j));
+            try testing.expectEqual(
+                breaksAtHighlight(&highlights, start, j),
+                breaksAtHighlight(&highlights, start, j),
+            );
+        }
+    }
+    try testing.expect(!breaksAtHighlight(&.{}, 0, 3));
 }
 
 test "foreground alpha separates shaping runs" {

@@ -2911,6 +2911,7 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
                 .grid = self.font_grid,
                 .cells = cells_slice,
                 .selection = if (selection) |s| s else null,
+                .highlights = highlights.items,
 
                 // We want to do font shaping as long as the cursor is
                 // visible on this viewport.
