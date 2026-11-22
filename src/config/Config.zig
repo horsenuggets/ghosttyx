@@ -1158,6 +1158,17 @@ palette: Palette = .{},
 /// Available since: 1.1.0
 @"split-divider-color": ?Color = null,
 
+/// The opacity of the split divider, from 0 (transparent) to 1 (opaque).
+/// Values outside this range are clamped. This applies to
+/// `split-divider-color` or, if that is unset, the default divider color.
+/// An empty value restores full opacity. Changes take effect in existing
+/// windows when the configuration is reloaded.
+///
+/// Whatever is behind the divider shows through it. In an opaque window that
+/// is the terminal background color. With `background-opacity` below 1 or a
+/// glass `background-blur`, it is the transparent or glass window background.
+@"split-divider-opacity": f64 = 1.0,
+
 /// Control when Ghostty preserves a zoomed split. Under normal circumstances,
 /// any operation that changes focus or layout of the split tree in a window
 /// will unzoom any zoomed split. This configuration allows you to control
@@ -4820,7 +4831,12 @@ pub fn finalize(self: *Config) !void {
     // Clamp our split opacity
     self.@"unfocused-split-opacity" = @min(1.0, @max(0.15, self.@"unfocused-split-opacity"));
 
-    inline for (.{ "macos-tab-bar-opacity", "macos-tab-active-opacity", "macos-tab-inactive-opacity" }) |field| {
+    inline for (.{
+        "macos-tab-active-opacity",
+        "macos-tab-bar-opacity",
+        "macos-tab-inactive-opacity",
+        "split-divider-opacity",
+    }) |field| {
         @field(self, field) = @min(1.0, @max(0.0, @field(self, field)));
     }
 
@@ -10887,11 +10903,16 @@ test "macOS tab background colors parse and reset" {
     }
 }
 
-test "macOS tab opacities parse clamp and reset" {
+test "unit interval opacities parse clamp and reset" {
     const testing = std.testing;
     const alloc = testing.allocator;
 
-    inline for (.{ "macos-tab-bar-opacity", "macos-tab-active-opacity", "macos-tab-inactive-opacity" }) |field| {
+    inline for (.{
+        "macos-tab-active-opacity",
+        "macos-tab-bar-opacity",
+        "macos-tab-inactive-opacity",
+        "split-divider-opacity",
+    }) |field| {
         inline for (.{
             .{ "0", 0.0 },
             .{ "0.5", 0.5 },
